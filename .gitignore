@@ -1,0 +1,5 @@
+__pycache__/
+R2F_errlog.dat
+data/config.ini
+src/__pycache__/
+*.pyc
