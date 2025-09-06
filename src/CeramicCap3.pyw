@@ -1,4 +1,4 @@
-import os,sys
+import os,sys,pathlib
 import traceback
 import ctypes
 import datetime
@@ -16,8 +16,6 @@ import CCConfig
 from Voltfield import VoltField
 from Meas3 import Meas
 from Tabwidget  import MyTabWidget
-from rightwindow import RightWindowWidget
-from BridgeConfig import BridgeConfig
 import CustomData 
 import scipy.optimize
 import TZA
@@ -36,6 +34,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QFont,QIcon
 from PyQt5.QtWidgets import (
     QApplication,
+    QAction,
     QCheckBox,
     QLabel,
     QMainWindow,
@@ -80,6 +79,7 @@ class MainWindow(QMainWindow):
         self.config =CCConfig.CCC()
         self.ver = 3.0
         self.quit=False
+        self.loopfinished=False
         self.yyyymmdir = r'C:\DATA\CERAMIC\202509'
         self.mytext =[]
         self.mytextmaxlen =1000
@@ -91,24 +91,21 @@ class MainWindow(QMainWindow):
         self.V1 = 1.811+2.578j
         self.V2 = -9.9+0j
         self.dV = 0.1
-        self.g1 = 1
-        self.g2 = 1
+        self.g1 = 10000
+        self.g2 = 100
         self.tza1.set_fgain(self.g1)
         self.tza2.set_fgain(self.g2)
-        self.fsig =float(self.config.meas['FSTART'])
-        self.fsigold = self.fsig
+        self.firstgood=False
+        
+        self.fsigold = -1
         self.rData = CustomData.EightPoints(1000,800000)
         self.rSet  = CustomData.FourChannels(1000,800000,2,[],[],[],[],0,0,0,ts=-1)
         self.allData = CustomData.AllData()
+        self.myprint(f"Welcome to Version {self.ver}")
+        self.parseconfig()
 
-        self.finelist = [float(i) for i in self.config.meas['FINELIST'].split(',')]
-        self.coarselist = [float(i) for i in self.config.meas['COARSELIST'].split(',')]
-
-        if self.config.meas['USEFINE']==True:
-            self.flist = self.finelist
-        else:
-            self.flist = self.coarselist
-         
+        quit = QAction("Quit", self)
+        quit.triggered.connect(self.finishUp) 
 
         self.scatterplots=np.empty((2,2),dtype=object)
         for i in range(2):
@@ -131,11 +128,19 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.ciplots[i,j] = mplwidget.MplWidget(rightax=False)
 
+        self.alphafplots=np.empty((1,2),dtype=object)
+        for j in range(2):
+            self.alphafplots[0,j] = mplwidget.MplWidget(rightax=False)
+
 
         self.output =  QTextEdit(self)
         self.output.resize(540, 200)
         self.output.setReadOnly(True)
        
+        self.mstatus =  QTextEdit(self)
+        self.mstatus.resize(540, 200)
+        self.mstatus.setReadOnly(True)
+
         glayout = QHBoxLayout()
         vlayout= QVBoxLayout()
         vlayout.addItem(QSpacerItem(60,20,QSizePolicy.Fixed,QSizePolicy.Fixed))
@@ -152,7 +157,7 @@ class MainWindow(QMainWindow):
         vlayout.addWidget(self.bufp)
         vlayout.addWidget(self.bufm)
         vlayout.addWidget(QLabel('current f:'))
-        self.laf = QLabel('{0:8.0f} kHz'.format(self.fsig/1000))
+        self.laf = QLabel('{0:5.1f} kHz'.format(self.fsig/1000))
         vlayout.addWidget(self.laf)
         vlayout.addWidget(QLabel('Re(V1):'))
         self.lareV1 = QLabel("{0:8.3f} V".format(np.real(self.V1)))
@@ -185,6 +190,7 @@ class MainWindow(QMainWindow):
             vlayout.addWidget(rb)
             if rb.text()==self.tza2.hgain:
                 rb.setChecked(True)
+        vlayout.addItem(QSpacerItem(60,20,QSizePolicy.Fixed,QSizePolicy.Expanding))
         glayout.addLayout(vlayout)        
         self.rg1.buttonToggled.connect(self.rb1Toggled)
         self.rg2.buttonToggled.connect(self.rb2Toggled)
@@ -194,7 +200,7 @@ class MainWindow(QMainWindow):
 
         #glayout.addWidget(self.rightwindow)
         central_widget.setLayout(glayout)  
-        self.myprint(f"Welcome to Version {self.ver}")
+        
         
         self.progressBar = QProgressBar()
         self.progressBar.setMaximumWidth(400)
@@ -216,8 +222,40 @@ class MainWindow(QMainWindow):
         self.goagain()
 
 
+    def parseconfig(self):
+        self.config.read()
+        self.C31 = self.config.C31
+        self.C32 = self.config.C32
+        self.C41 = self.config.C41
+        self.C42 = self.config.C42
+        self.myprint("Measuring C31={0:3.0e} C32= {1:3.0e} & C41={2:3.0e} C42={3:3.0e}".format(self.C31,self.C32,self.C41,self.C42))
+
+        self.SN31 = self.config.SN31
+        self.SN32 = self.config.SN32
+        self.SN41 = self.config.SN41
+        self.SN42 = self.config.SN42
+
+        self.myprint("S/N: {0} {1} {2} {3}".format(self.SN31,self.SN32,self.SN41,self.SN42))
+
+        self.fsig =self.config.fstart
+
+        self.finelist = self.config.finelist
+        self.coarselist = self.config.coarselist
+        self.flist = self.config.flist
+        self.nrMeas = self.config.nrMeas
+        self.datadir = self.config.datadir
+
+    def RBupdate(self):
+        for rb in self.rb1:
+            if rb.text()==self.tza1.hgain:
+                rb.setChecked(True)
+        for rb in self.rb2:
+            if rb.text()==self.tza2.hgain:
+                rb.setChecked(True)
+     
+
     def laUpdate(self):
-        self.laf.setText('{0:8.0f} kHz'.format(self.fsig/1000))
+        self.laf.setText('{0:8.1f} kHz'.format(self.fsig/1000))
         self.lareV1.setText('{0:8.3f} V'.format(np.real(self.V1)))
         self.laimV1.setText('{0:8.3f} V'.format(np.imag(self.V1)))
     
@@ -228,8 +266,8 @@ class MainWindow(QMainWindow):
     def setf(self,f):
         self.statusBar.showMessage('Next frequency: {0} kHz'.format(f/1000),5000)
         self.fsig = f
-        self.myprint('setf in main program {0}'.format(self.fsig/1000))
-
+        self.allData.deletekey(f)
+    
 
     def fp(self):
         f = self.fsig
@@ -252,7 +290,6 @@ class MainWindow(QMainWindow):
     def rb1Toggled(self,button, checked):
         if checked:
             self.g1=self.tza1.text_to_gain(button.text())
-            print(f"rb1 {button.text()=} {self.g1=}")
 
             #self.tza1.set_hgain(button.text())
 
@@ -260,29 +297,57 @@ class MainWindow(QMainWindow):
         if checked:
             self.tza2.set_hgain(button.text())
             self.g2=self.tza2.text_to_gain(button.text())
-            print(f"rb2 {button.text()=} {self.g2=}")
 
 
 
 
     def finishUp(self):
+        self.statusBar.showMessage('Wait for graceful exit')
+        self.myprint("Wait to finish up measurement for graceful exit")
         self.quit=True
 
+
     def closeEvent(self, event):
-        self.myprint("Quitting gracefully")
+        if self.loopfinished==False:
+            self.statusBar.showMessage('Wait for graceful exit')
+            self.myprint("Close event called, but loop not finished")
+            self.quit=True            
+            event.ignore()
+        else:
+            self.statusBar.showMessage('Quitting')
+            self.myprint("Quitting gracefully")
+            event.accept()
 
     def newValues(self):
         self.dV = self.VF_dV.value()
 
     def onNewData(self,MyData: CustomData.EightPoints):
         self.rData = MyData             #recent data
-        self.V1 = self.rData.Vz3
+        self.V1 = self.rData.Res['Vz3']
         if self.rData.goodData == True:
-            self.allData.append(self.rData)
+            if self.firstgood==True:
+                self.allData.append(self.rData)
+            else:
+                self.firstgood=True     
+        self.sblabel.setText("{0}/{1} good measurements at {2:5.2f} kHz".format(\
+            self.allData.countf(self.fsig),self.nrMeas,self.fsig/1000))
         if self.fsig == self.fsigold:
-            if self.allData.countf(self.fsig)==10:
+            if self.allData.countf(self.fsig)==self.nrMeas:
+                self.saveData(self.fsig)
                 self.fp()
         self.replot()
+
+    def calcVsmall(self,f,V2=-9.0,R=50):
+        C42 =self.C42
+        C41 =self.C41
+        iw = 1j*f*2*np.pi
+        I2 = V2*iw*C42/(1+iw*C42*R)
+        V1=-I2*(R+1/(iw*C41))
+        return V1
+
+
+
+
 
     def goagain(self):
         if not self.quit:
@@ -291,7 +356,27 @@ class MainWindow(QMainWindow):
             self.mydvm.moveToThread(self.thread)
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
-            self.mydvm.storeV(self.V1,self.V2,self.dV,self.fsig)    
+            if self.fsigold == self.fsig:
+                while np.abs(self.V1)>9:
+                    self.V1=self.V1*0.9
+                    self.V2=self.V2*0.9
+                self.mydvm.storeV(self.V1,self.V2,self.dV,self.fsig,self.g1,self.g2)    
+            else:
+                self.g1 = R2FMath.newgainvalue1(self.fsig,self.C31,self.C41)
+                self.g2 = R2FMath.newgainvalue2(self.fsig,self.C41)
+                self.myprint('pick gains {0} {1}'.format(self.g1,self.g2))
+                self.tza1.set_fgain(self.g1)
+                self.tza2.set_fgain(self.g2)
+                self.RBupdate()
+                self.firstgood= False
+                self.V2 = -9.9+0j
+                self.V1 = self.calcVsmall(self.fsig,V2=self.V2)
+                while np.abs(self.V1)>9:
+                    self.V2 = self.V2*0.9
+                    self.V1 = self.calcVsmall(self.fsig,V2=self.V2)
+                self.dV = np.abs(self.V1)/100
+                #self.myprint('New f={0:8.0f} kHz V1={1:4.3f} + {2:4.3f}i  dV={3:4.3f}'.format(self.fsig/1000,np.real(self.V1),np.imag(self.V1),self.dV))
+                self.mydvm.storeV(self.V1,self.V2,self.dV,self.fsig,self.g1,self.g2)        
             self.laUpdate()
             self.mydvm.dataReady.connect(self.onNewData)
             self.mydvm.dataSetReady.connect(self.onNewSet)
@@ -304,6 +389,7 @@ class MainWindow(QMainWindow):
             self.thread.start()  
             self.fsigold =self.fsig
         else:
+            self.loopfinished =True
             self.close()
 
 
@@ -316,9 +402,10 @@ class MainWindow(QMainWindow):
         n = datetime.datetime.now()
         t = time.time()-self.t0
         t1 = n.strftime('%H:%M:%S')+' >{0:8.1f} < : '.format(t)+ newtext
-        t2 = n.strftime('%m/%d')+ t1 +'\n'
+        t2 = n.strftime('%m/%d')+' '+ t1 +'\n'
+        fn = 'CAP'+n.strftime('%m%d%Y')+'.LOG'
         if self.yyyymmdir!='':
-            with open(os.path.join(self.yyyymmdir,'log.dat'), "a") as file:
+            with open(os.path.join(self.yyyymmdir,fn), "a") as file:
                 file.write(t2)
         self.mytext.append(t1)
         while len(self.mytext)>self.mytextmaxlen:
@@ -331,16 +418,76 @@ class MainWindow(QMainWindow):
         if tat=='scatter':
            self.plotscatter()
         if tat=='msg':
-           self.showoutput()
+           self.showOutput()
         if tat=='raw':
            self.plotraw()
-        if tat=='alpha':
+        if tat=='alpha(t)':
            self.plotalpha()
         if tat=='circles':
            self.plotcircles()
+        if tat=='alpha(f)':
+           self.plotalphaf()
+        if tat=='last status':           
+            self.showLastStatus()
+
+    def ensureDir(self):
+        bd = self.datadir
+        bd0 = os.path.join(bd,self.SN41)
+        long_path = pathlib.Path(bd0)
+        long_path.mkdir(parents=True, exist_ok=True)
+        return bd0
+
+
+
+    def saveData(self,f):
+        bd0=self.ensureDir()
+        dt = datetime.datetime.fromtimestamp(self.t0)
+        valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
+        fn='CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
+        mykeys = ['fsig','ts','alpha3mean','beta3mean','alpha4mean','beta4mean',\
+                  'V2cplxcenter','V2cplxradius','V3cplxcenter','V3cplxradius',\
+                  'V4cplxcenter','V4cplxradius','V2setamp','V1setcplxcenter','V1setcplxradius',
+                  'Vz3','Vz4']
+        rdict = self.allData.getkeys(self.fsig,mykeys)
+        L=0
+        if os.path.exists(os.path.join(bd0,fn))==False:
+            with open(os.path.join(bd0,fn), "w") as file:
+                o='# '
+                for k,v in rdict.items():
+                    L = len(v)
+                    if isinstance(v[0], complex):
+                        o+='Re({0}) Im({0}) '.format(k)
+                    else:
+                        o+='{0} '.format(k)
+                o+='\n'
+                file.write(o)
+        with open(os.path.join(bd0,fn), "a") as file:
+            for n in range(L):
+                o=''
+                for k,v in rdict.items():    
+                    a=v[n]
+                    if  isinstance(a, complex):
+                        o+='{0:12.8f} {1:12.8f} '.format(a.real,a.imag)
+                    else:
+                        o+='{0:12.8f} '.format(a)
+                o+='\n'
+                file.write(o)
+                #file.write('# frequency/Hz t/s  a3 b3 a4 b4  x2 y2 r2  x3 y3 r3 x4 y4 r4 g1 g2 |V2| xV1set yV1set rV1set\n')
+        C=self.allData.getAveVolts(self.fsig,self.t0)
+        fn='VOLT_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
+        if os.path.exists(os.path.join(bd0,fn))==False:
+            with open(os.path.join(bd0,fn), "w") as file:
+                file.write('# frequency/Hz t/s  reV1 imV1 reV2 imV2 reV3 imV3 reV4 imV4 reV1set imV1set reV2set imV2set \n')
+        with open(os.path.join(bd0,fn), "a") as file:
+            for n in range(np.shape(C)[0]):
+                o = '{0:6.0f} {1:6.1f} '.format(C[n,0],C[n,1])
+                for k in range(2,np.shape(C)[1]):
+                    o+='{0:14.6f} '.format(C[n,k])
+                o+='\n'
+                file.write(o)
 
     def plotscatter(self):
-        if self.rData.ts<=0:
+        if self.rData.Res['ts']<=0:
             return
         for j in range(2):
             for i in range(2):
@@ -373,20 +520,34 @@ class MainWindow(QMainWindow):
         for j in range(2):
             for i in range(2):
                 self.abplots[i,j].canvas.ax1.cla()    
+        mul =1e6
+        mykeys = ['ts','alpha3mean','beta3mean','alpha4mean','beta4mean']
+        rdict = self.allData.getkeys(self.fsig,mykeys)
+        self.abplots[0,0].canvas.ax1.plot(rdict['ts']-self.t0,rdict['alpha3mean']*mul,'ro')
+        self.abplots[0,1].canvas.ax1.plot(rdict['ts']-self.t0,rdict['beta3mean']*mul,'bo')
 
-        t,a3 = self.allData.geta3(self.fsig,self.t0)
-        t,b3 = self.allData.getb3(self.fsig,self.t0)
-        t,a4 = self.allData.geta4(self.fsig,self.t0)
-        t,b4 = self.allData.getb4(self.fsig,self.t0)                        
-
-        self.abplots[0,0].canvas.ax1.plot(t,a3*1e6,'ro')
-        self.abplots[0,1].canvas.ax1.plot(t,a4*1e6,'bo')
-
-        self.abplots[1,0].canvas.ax1.plot(t,b3*1e6,'ro')
-        self.abplots[1,1].canvas.ax1.plot(t,b4*1e6,'bo')
+        self.abplots[1,0].canvas.ax1.plot(rdict['ts']-self.t0,rdict['alpha4mean']*mul,'ro')
+        self.abplots[1,1].canvas.ax1.plot(rdict['ts']-self.t0,rdict['beta4mean']*mul,'bo')
         for j in range(2):
             for i in range(2):
                  self.abplots[i,j].canvas.draw()
+
+
+    def plotalphaf(self):
+        if self.allData.count()==0:
+            return
+        for j in range(2):
+            self.alphafplots[0,j].canvas.ax1.cla() 
+
+        f,a=self.allData.getabf()  
+
+
+        self.alphafplots[0,0].canvas.ax1.errorbar(f,a[:,0],a[:,2],fmt='ro')
+        self.alphafplots[0,1].canvas.ax1.errorbar(f,a[:,1],a[:,3],fmt='bo')
+        self.alphafplots[0,0].canvas.ax1.set_xscale('log')
+        self.alphafplots[0,1].canvas.ax1.set_xscale('log')
+        for j in range(2):
+            self.alphafplots[0,j].canvas.draw()
 
 
     def plotcircles(self):
@@ -417,12 +578,15 @@ class MainWindow(QMainWindow):
 
         self.t = np.arange(len(self.rSet.Data[0].data))
         Vc=self.rSet.Data[0].Vc
-        phi = np.angle(Vc)
-        if phi<0: phi=phi+2*np.pi
-        t = phi/(2*np.pi)*self.rSet.fsamp/self.rSet.fsig
+        phi = -np.angle(-1j*Vc)
+        while phi<0:
+            phi=phi+2*np.pi
+        t = phi/(2*np.pi*self.rSet.fsig/self.rSet.fsamp)
         be1=int(t)
         be=be1
         en =int(self.rSet.fsamp/self.rSet.fsig*2)+be1
+        #be=0
+        #en=-1
 
         self.rawplots[0,0].canvas.ax1.plot(self.t[be:en],self.rSet.Data[0].data[be:en],'r.')
         self.rawplots[0,1].canvas.ax1.plot(self.t[be:en],self.rSet.Data[1].data[be:en],'g.')
@@ -436,13 +600,30 @@ class MainWindow(QMainWindow):
             for i in range(2):
                  self.rawplots[i,j].canvas.draw()
 
-    def showoutput(self):
+    def showOutput(self):
         o=''
         for n, i in enumerate(self.mytext):
             o+='{1}\n'.format(n,i)
         self.output.setText(o)
         scrollbar = self.output.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
+    def showLastStatus(self):
+        if self.rData.Res['ts']>0:
+            o=''
+            for k,v in self.rData.Res.items():
+                if isinstance(v, complex):
+                    if v.imag>0:
+                        o+='{0:30}:{1:8.3f} + i {2:8.3f}\n'.format(k,v.real,v.imag)
+                    else:
+                        o+='{0:30}:{1:8.3f} - i {2:8.3f}\n'.format(k,v.real,-v.imag)
+                elif isinstance(v, float):
+                    o+='{0:30}:{1:8.3f}\n'.format(k,v)
+                elif isinstance(v, int):
+                    o+='{0:30}:{1}\n'.format(k,v)
+            self.mstatus.setText(o)
+            scrollbar = self.mstatus.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
        
 def excepthook(exc_type, exc_value, exc_tb):

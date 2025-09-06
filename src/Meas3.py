@@ -33,6 +33,7 @@ class Meas(QObject):
         self.sg1 = self.rm.open_resource(sg1_name)
         dvm_name ='USB0::0x2A8D::0x8601::MY59000912::0::INSTR'
         self.dvm = self.rm.open_resource(dvm_name)
+        #self.dvm.write('*RST')
         self.oldf=-1
         self.precmd()       
 
@@ -56,16 +57,18 @@ class Meas(QObject):
             print(ostr)
         time.sleep(0.001)
  
-    def storeV(self,V1c,V2c,dV1,fsig):
+    def storeV(self,V1c,V2c,dV1,fsig,g1,g2):
         if self.isidle:
             self.V1c=V1c
             self.V2c=V2c
             self.dV1 = dV1
             self.fsig = fsig
+            self.g1 = g1
+            self.g2 = g2
         
     def prepForMeas(self):
         if self.co==0:
-            self.par.myprint("V1= {0:8.3f}  V2={1:8.3f} f={2:5.0f} kHz".format(self.V1c,self.V2c,self.fsig/1000))
+            self.par.myprint("V1= {0:8.3f}  V2={1:8.3f} dV1={2:8.3f}  f={3:5.1f} kHz".format(self.V1c,self.V2c,self.dV1,self.fsig/1000))
         if self.co%2==0:
             self.dvm.write('ROUT:OPEN (@211,248)')   
             self.dvm.write('ROUT:CLOS (@218,241)') # 8->1 1->4
@@ -107,7 +110,10 @@ class Meas(QObject):
         phase2=float(self.sg1.query('SOUR2:PHASE?'))
         self.V1rb = V1 * np.exp(1j*phase1/180*np.pi)
         self.V2rb = V2 * np.exp(1j*phase2/180*np.pi)
-
+        ret=self.sg1.query('SYSTem:ERRor?')
+        retval = int(ret.split(',')[0])
+        if retval!=0:
+            self.par.myprint(f'Error: {ret}')
 
 
         
@@ -120,8 +126,7 @@ class Meas(QObject):
     def start(self):
         self.isidle=False
         start = time.time()
-        self.raw8 = CustomData.EightPoints(self.fsig,self.fsamp)
-        #self.par.myprint("raw8set  f={0:5.0f} kHz".format(self.fsig/1000))
+        self.raw8 = CustomData.EightPoints(self.fsig,self.fsamp,g1=self.g1,g2=self.g2)
         for self.co in range(8):
             self.prepForMeas()
             self.sendtrig()

@@ -15,7 +15,7 @@ class MyTabWidget(QWidget):
         self.master     = QTabWidget() 
 
         self.master.resize(300, 200) 
-        self.tablabels=['scatter','raw','alpha','circles','msg']
+        self.tablabels=['scatter','raw','alpha(t)','circles','alpha(f)','msg','last status']
         self.mytabs =[]
         for l in self.tablabels:
             self.mytabs.append(QWidget())
@@ -46,9 +46,19 @@ class MyTabWidget(QWidget):
         for i in range(2):
             for j in range(2):
                 glayout.addWidget(parent.ciplots[i,j],i,j)                
+        glayout =  QGridLayout()
+        self.mytabs[4].setLayout(glayout) 
+        for j in range(2):
+            glayout.addWidget(parent.alphafplots[0,j],0,j)                
+
+        glayout =  QGridLayout()
+        self.mytabs[-2].setLayout(glayout) 
+        glayout.addWidget(parent.output,0,0)    
 
         glayout =  QGridLayout()
         self.mytabs[-1].setLayout(glayout) 
-        glayout.addWidget(parent.output,0,0)    
+        glayout.addWidget(parent.mstatus,0,0)    
+
+        
 
         self.master.currentChanged.connect(parent.replot)            

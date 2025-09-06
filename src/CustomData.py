@@ -1,5 +1,6 @@
 import R2FMath
 import numpy as np
+import copy
 
 class MyData:
     def __init__(self, ave4,ts):
@@ -49,20 +50,27 @@ class FourChannels:
             self.Data[i].setfmin(fmin)
             self.Data[i].fit()
 
+
 class EightPoints:
-    def __init__(self,fsig,fsamp,Nhars=2):
-        self.fsig  = fsig
-        self.fsamp = fsamp
-        self.Nhars = Nhars
+    def __init__(self,fsig,fsamp,Nhars=2,g1=1,g2=1,ratio=10):
+        self.Res={}
+        self.Res['fsig']= fsig
+        self.Res['ratio']= ratio
+        self.Res['fsamp']= fsamp
+        self.Res['Nhars']= Nhars
+        self.Res['gain1']= g1
+        self.Res['gain2']= g2      
         self.ats = -1*np.ones(8)
-        self.ts = min(self.ats)
+        self.Res['ts']= min(self.ats)      
         self.Data = np.zeros(8,dtype=object)
 
     def setPoint(self,i,ch1,ch2,ch3,ch4,V1c,V2c,ts):
-        self.Data[i] = FourChannels(self.fsig,self.fsamp,self.Nhars,ch1,ch2,ch3,ch4,V1c,V2c,i,ts)
+        self.V2c=V2c
+        self.Data[i] = FourChannels(self.Res['fsig'],self.Res['fsamp'],self.Res['Nhars'],\
+                                    ch1,ch2,ch3,ch4,V1c,V2c,i,ts)
         self.ats[i] =ts
         if min(self.ats)>0:
-            self.ts = np.mean(self.ats)
+            self.Res['ts'] = np.mean(self.ats)
 
 
     def calc(self):
@@ -78,125 +86,138 @@ class EightPoints:
         self.ave4  = 0.5*(self.raw8[::2,:]+self.raw8[1::2,:])
         self.ctrla = 0.5*(self.ctrl[::2,:]+self.ctrl[1::2,:])
         self.Cir = np.zeros(4,dtype=object)
+        self.Ccirpar =[]
+        la=['V1cplxcenter','V1cplxradius','V2cplxcenter','V2cplxradius',\
+            'V3cplxcenter','V3cplxradius','V4cplxcenter','V4cplxradius']
         for i in range(4):
             self.Cir[i] = R2FMath.FourCplxPts(self.ave4[:,i])
-
-        self.circlepar = np.hstack(( np.sqrt(self.Cir[2].circlepar[0]**2+self.Cir[2].circlepar[1]**2),self.Cir[2].circlepar[2],\
-                                    np.sqrt(self.Cir[3].circlepar[0]**2+self.Cir[3].circlepar[1]**2),self.Cir[3].circlepar[2]))
+            if i>0:
+                self.Res[la[i*2]]= self.Cir[i].cplxcenter
+                self.Res[la[i*2+1]]= self.Cir[i].cplxradius
+        self.Res['V2setamp']= self.V2c
+        self.V1fit= R2FMath.FourCplxPts(self.ctrla[:,0])        
+        self.Res['V1setcplxcenter']= self.V1fit.cplxcenter
+        self.Res['V1setcplxradius']= self.V1fit.cplxradius
 
         self.pars3,self.vals3,self.errs3,self.Chi3,self.Cov3 = R2FMath.mycomplexfit(self.ctrla[:,0],\
                              self.ave4[:,2])
         self.pars4,self.vals4,self.errs4,self.Chi4,self.Cov4 = R2FMath.mycomplexfit(self.ctrla[:,0],\
                              self.ave4[:,3])
+        result3=-(self.pars3[0]+1j*self.pars3[1])/(self.pars3[2]+1j*self.pars3[3])                
+        result4=-(self.pars4[0]+1j*self.pars4[1])/(self.pars4[2]+1j*self.pars4[3])        
+        self.Res['Vz3']= result3
+        self.Res['Vz4']= result4
 
-        MCs = 20000
-        parMC3=np.random.multivariate_normal( self.pars3,self.Cov3,size =MCs)
-        parMC4=np.random.multivariate_normal( self.pars4,self.Cov4,size =MCs)
-
-        result3=-(parMC3[:,0]+1j*parMC3[:,1])/(parMC3[:,2]+1j*parMC3[:,3])                
-        result4=-(parMC4[:,0]+1j*parMC4[:,1])/(parMC4[:,2]+1j*parMC4[:,3])        
-        self.Vz3 =  np.mean(result3)        
-        self.Vz4 =  np.mean(result4)
-        self.Vz3e =  0.5* (np.percentile(np.real(result3),84.134) -np.percentile(np.real(result3),15.866)) + \
-                0.5j*(np.percentile(np.imag(result3),84.134) -np.percentile(np.imag(result3),15.866))
-        self.Vz4e =  0.5* (np.percentile(np.real(result4),84.134) -np.percentile(np.real(result4),15.866)) + \
-                0.5j*(np.percentile(np.imag(result4),84.134) -np.percentile(np.imag(result4),15.866))
-        
-        ratio =10
         self.V1m = self.ave4[:,0]
         self.V2m = self.ave4[:,1]
         self.V3m = self.ave4[:,2]
         self.V4m = self.ave4[:,3]
-        self.u =self.V1m/self.V2m+ratio
+        self.u =self.V1m/self.V2m+self.Res['ratio']
         self.v3 = self.V3m/self.V2m
         self.v4 = self.V4m/self.V2m
         self.fp3, self.fv3,self.fe3,self.C23,self.Cov3 = R2FMath.mycomplexfit(self.v3,self.u)
         self.fp4, self.fv4,self.fe4,self.C24,self.Cov4 = R2FMath.mycomplexfit(self.v4,self.u)
         self.gain3  = self.fp3[2]+1j*self.fp3[3]
         self.gain4  = self.fp4[2]+1j*self.fp4[3]
-        self.alpha3 = np.real(-self.u+ self.gain3*self.v3)/ratio
-        self.beta3  = np.imag(-self.u+ self.gain3*self.v3)/ratio
-        self.alpha4 = np.real(-self.u+ self.gain4*self.v4)/ratio
-        self.beta4  = np.imag(-self.u+ self.gain4*self.v4)/ratio
-        self.alphamean3 = np.mean(self.alpha3)
-        self.betamean3 = np.mean(self.beta3)
-        self.alphamean4 = np.mean(self.alpha4)
-        self.betamean4 = np.mean(self.beta4)
+        self.alpha3 = np.real(-self.u+ self.gain3*self.v3)/self.Res['ratio']
+        self.beta3  = np.imag(-self.u+ self.gain3*self.v3)/self.Res['ratio']
+        self.alpha4 = np.real(-self.u+ self.gain4*self.v4)/self.Res['ratio']
+        self.beta4  = np.imag(-self.u+ self.gain4*self.v4)/self.Res['ratio']
+        self.Res['alpha3mean'] = np.mean(self.alpha3)
+        self.Res['beta3mean']  = np.mean(self.beta3)
+        self.Res['alpha4mean'] = np.mean(self.alpha4)
+        self.Res['beta4mean']  = np.mean(self.beta4)
         self.setGoodFlag()
 
     def setGoodFlag(self):
         self.goodData=True
-        if self.circlepar[0]>1:
+        if abs(self.Res['V3cplxcenter'])>1:
             self.goodData=False
-        if self.circlepar[2]>5:
+        if abs(self.Res['V4cplxcenter'])>1:
             self.goodData=False
-
-
         
 class AllData():
     def __init__(self):
         self.mydict={}
 
     def append(self,ND:EightPoints):
-        f = ND.fsig
+        f = ND.Res['fsig']
         if f not in self.mydict:
             self.mydict[f] = []
         self.mydict[f].append(ND)
     
+    def deletekey(self,f):
+        if f in self.mydict:
+             del self.mydict[f]
+
+    def count(self):
+        return len(list(self.mydict))
+
     def countf(self,f):
         if f not in self.mydict:
             return 0
         else:
             return len(self.mydict[f])
     
-    def getCircles(self,f,t0):
-        t=[]
+    def getkeys(self,f,keys):
+        retdict ={}
+        L = len(self.mydict[f])
+        if L==0:
+            for k in keys:
+                retdict[k]=np.array([])
+                return retdict
+        for k in keys:
+            retdict[k]=np.empty(L,dtype=np.array(self.mydict[f][0]).dtype)
+        for n,a in enumerate(self.mydict[f]):
+            for k in keys:
+                retdict[k][n] =a.Res[k]
+        return retdict
+
+    def getallkeys(self,f):
+        k = list(self.mydict)
+        return self.getkeys(f,k)
+
+    def getAveVolts(self,f,t0=0):
+        L = len(self.mydict[f])
+        Nrows = np.shape(self.mydict[f][0].ave4)[0]  
+        Ncols = 2+2*np.shape(self.mydict[f][0].ave4)[1]   +2*np.shape(self.mydict[f][0].ctrla)[1]
+        #ret = np.empty(Nrows*L,Ncols)
+        ret =[]
+        for i in range(L):
+            for  obj in self.mydict[f]:
+                for j in range(Nrows):
+                    line  = np.hstack((f,self.mydict[f][0].Res['ts']-t0))
+                    for k in range(np.shape(obj.ave4)[1]):
+                        line =np.hstack((line,obj.ave4[j,k].real,obj.ave4[j,k].imag))
+                    for k in range(np.shape(obj.ctrla)[1]):
+                        line =np.hstack((line,obj.ctrla[j,k].real,obj.ctrla[j,k].imag))
+                ret.append(line)            
+        ret = np.array(ret)
+        return ret
+
+
+
+    def getabf(self):
+        f=list(self.mydict)
         ret=[]
-        for a in self.mydict[f]:
-            t.append(a.ts-t0)
-            ret.append(a.circlepar)
-        return np.array(t),np.array(ret)
-        
-        
+        for ff in f:
+            dummy=[]
+            for a in self.mydict[ff]:
+                dummy.append(np.hstack( (a.alphamean3,a.betamean3,a.alphamean4,a.betamean4)))
+            dummy = np.array(dummy)
+            da = dummy[:,2]-dummy[:,0]
+            db = dummy[:,3]-dummy[:,1]
+            if len(da)>2:
+                sa =np.std(da,ddof=1)
+            else:
+                sa=0
+            if len(db)>2:
+                sb =np.std(da,ddof=1)
+            else:
+                sb=0
+            ret.append(np.hstack((np.mean(da),np.mean(db),sa,sb)))
 
-
-    def geta3(self,f,t0):
-        t=[]
-        ret=[]
-        for a in self.mydict[f]:
-            t.append(a.ts-t0)
-            ret.append(a.alphamean3)
-        return np.array(t),np.array(ret)
-
-    def getb3(self,f,t0):
-        t=[]
-        ret=[]
-        for a in self.mydict[f]:
-            t.append(a.ts-t0)
-            ret.append(a.betamean3)
-        return np.array(t),np.array(ret)
-
-    def geta4(self,f,t0):
-        t=[]
-        ret=[]
-        for a in self.mydict[f]:
-            t.append(a.ts-t0)
-            ret.append(a.alphamean4)
-        return np.array(t),np.array(ret)
-    
-    def getb4(self,f,t0):
-        t=[]
-        ret=[]
-        for a in self.mydict[f]:
-            t.append(a.ts-t0)
-            ret.append(a.betamean4)
-        return np.array(t),np.array(ret)
-
-        line = np.hstack(t1,np.real(V3),np.real(V3e),np.imag(V3),np.image(V3e),np.real(V4),np.real(V4e),np.imag(V4),np.image(V4e))
-        if f not in self.mydict:
-            self.myficyt[f]= 1
-
-
+        return np.array(f),np.array(ret)
 
         
 

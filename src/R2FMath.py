@@ -114,6 +114,42 @@ def get_f(y,rf):
     return minf
 
 
+def calcI2(f, C42,R=50,V2=-9.9):
+    iw = 1j*f*2*np.pi
+    I2 = V2*iw*C42/(1+iw*C42*R)
+    return I2
+
+def calcV1(f, C41,C42,R=50,V2=-9.9):
+    iw = 1j*f*2*np.pi
+    I2 = V2*iw*C42/(1+iw*C42*R)
+    V1=-I2*(R+1/(iw*C41))
+    return V1
+
+def calcI1(f,C41,V1,R=50):
+    iw = 1j*f*2*np.pi
+    I1 = iw*C41/(1+iw*R*C41)*V1
+    return I1
+def lp(f,f0=2e4,Q=0.5):
+    ret = f0*f0/(f0*f0-f*f+f0/Q*1j*f)
+    return ret
+
+def newgainvalue2(f,C41):
+    V1 = calcV1(f,C41,C41/10)
+    dI1 = calcI1(f,C41,V1*1e-2,R=50)
+    gain=10**np.round(np.log10(0.1/np.abs(dI1*1e3*lp(f))))
+    if gain<1: gain=1
+    if gain>100000: gain =100000
+    return gain
+
+def newgainvalue1(f,C31,C41):
+    V1 = calcV1(f,C41,C41/10)
+    dI1 = calcI1(f,C31,V1*1e-2,R=50)
+    gain=10**np.round(np.log10(0.1/np.abs(dI1*1e3*lp(f))))
+    if gain<1: gain=1
+    if gain>100000: gain =100000
+    return gain
+
+
 def mycomplexfit(x,y):
     L = len(x)
     X = np.empty((L*2,4))
@@ -348,32 +384,35 @@ class FACapBridge():
 
 
 class FourCplxPts():
+    """
+    Originally this function used 4 points, in reality it can be 4+ points
+    """
     def __init__(self,data):
         self.data = data
-        self.circlepar,self.C2 = self.fit_circle(np.real(data),np.imag(data))
 
-    def circleC2(self,par,xdata,ydata):
-        return np.sum( (np.sqrt((xdata - par[0])**2 +( ydata-par[1])**2)- par[2])**2)
+        self.cplxcenter,self.cplxradius,self.C2 = self.fit_circle(np.real(data),np.imag(data))
 
     def plot_circle(self,par):
-        ang = np.linspace(0,2*np.pi)
-        return par[0]+par[2]*np.cos(ang), par[1]+par[2]*np.sin(ang)
+        ang = np.exp(1j*np.linspace(0,2*np.pi))
+        return np.real(par[0]+par[1]*ang),np.imag(par[0]+par[1]*ang)
     
     def plot_mycircle(self):
-        return self.plot_circle(self.circlepar)
+        return self.plot_circle([self.cplxcenter,self.cplxradius])
 
-    def fit_circle(self,xdata,ydata):
-        centerx = np.mean(xdata)
-        centery = np.mean(ydata)
-        radius=np.sqrt(np.mean((xdata-centerx)**2+(ydata-centery)**2))
-        parin =(centerx,centery,radius)
-        c2start =self.circleC2(parin,xdata,ydata)
-        res=scipy.optimize.minimize(self.circleC2,parin,args=(xdata,ydata))
-        parout= res['x']
-        c2end = res['fun']
-        return parout,c2end
-
-
+    def fit_circle(self,x,y,sigma=1):
+        # points: array-like shape (n,2), n >= 3
+        A = np.c_[x, y, np.ones_like(x)]
+        b = -(x**2 + y**2)
+        D, E, F = np.linalg.lstsq(A, b, rcond=None)[0]
+        x0, y0 = -D/2, -E/2
+        c0 = x0 +1j*y0
+        r = np.sqrt((D**2 + E**2)/4 - F)
+        phi0 = np.arctan2(y[0]-y0,x[0]-x0)
+        cr = r*np.exp(1j*phi0)
+        d = np.sqrt((x-x0)**2 + (y-y0)**2)
+        residuals = d - r
+        chi2 = np.sum((residuals/sigma)**2)
+        return c0, cr,chi2
 
 
 
