@@ -126,7 +126,8 @@ class EightPoints:
         self.Res['alpha3mean'] = np.mean(self.alpha3)
         self.Res['beta3mean']  = np.mean(self.beta3)
         self.Res['alpha4mean'] = np.mean(self.alpha4)
-        self.Res['beta4mean']  = np.mean(self.beta4)
+        self.Res['beta4mean']  = np.mean(self.beta4)            
+
         self.setGoodFlag()
 
     def setGoodFlag(self):
@@ -176,6 +177,28 @@ class AllData():
     def getallkeys(self,f):
         k = list(self.mydict)
         return self.getkeys(f,k)
+    
+    def getdictf (self,keys):
+        retdict={}
+        if 'fsig' not in keys:
+            keys.append('fsig')
+        allf = list(self.mydict)
+        if len(allf)==0:
+            for k in keys:
+                retdict[k]=np.array([])
+                return retdict
+        else:
+            for k in keys:
+                retdict[k]=[]
+            for f in allf:
+                odict = self.getkeys(f,keys)
+                for k in keys:
+                    for item in odict[k]:
+                        retdict[k].append(item)
+            for k in keys:
+                retdict[k] =np.array(retdict[k])
+            return retdict
+
 
     def getAveVolts(self,f,t0=0):
         L = len(self.mydict[f])

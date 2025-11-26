@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
 
     def onNewData(self,MyData: CustomData.EightPoints):
         self.rData = MyData             #recent data
-        self.V1 = self.rData.Res['Vz3']
+        self.V1 = self.rData.Res['Vz4']
         if self.rData.goodData == True:
             if self.firstgood==True:
                 self.allData.append(self.rData)
@@ -462,6 +462,8 @@ class MainWindow(QMainWindow):
                 o+='\n'
                 file.write(o)
         with open(os.path.join(bd0,fn), "a") as file:
+            k =list(rdict)[0]
+            L = len(rdict[k])
             for n in range(L):
                 o=''
                 for k,v in rdict.items():    
@@ -539,11 +541,11 @@ class MainWindow(QMainWindow):
         for j in range(2):
             self.alphafplots[0,j].canvas.ax1.cla() 
 
-        f,a=self.allData.getabf()  
+        mykeys = ['fsig','alpha3mean','beta3mean','alpha4mean','beta4mean']
+        rdict = self.allData.getdictf(mykeys)
 
-
-        self.alphafplots[0,0].canvas.ax1.errorbar(f,a[:,0],a[:,2],fmt='ro')
-        self.alphafplots[0,1].canvas.ax1.errorbar(f,a[:,1],a[:,3],fmt='bo')
+        self.alphafplots[0,0].canvas.ax1.plot(rdict['fsig'],rdict['alpha3mean'],'ro')
+        self.alphafplots[0,1].canvas.ax1.plot(rdict['fsig'],rdict['alpha4mean'],'bo')
         self.alphafplots[0,0].canvas.ax1.set_xscale('log')
         self.alphafplots[0,1].canvas.ax1.set_xscale('log')
         for j in range(2):
@@ -556,14 +558,19 @@ class MainWindow(QMainWindow):
         for j in range(2):
             for i in range(2):
                 self.ciplots[i,j].canvas.ax1.cla()    
+        mykeys =['ts','V2cplxradius','V3cplxradius','V4cplxradius','V1setcplxradius']
+        rdict = self.allData.getkeys(self.fsig,mykeys)
+        self.ciplots[0,0].canvas.ax1.plot(rdict['ts']-self.t0,np.abs(rdict['V2cplxradius']),'ro')
+        self.ciplots[0,1].canvas.ax1.plot(rdict['ts']-self.t0,np.abs(rdict['V1setcplxradius']),'bo')
 
-        t, par = self.allData.getCircles(self.fsig,self.t0)
+        self.ciplots[1,0].canvas.ax1.plot(rdict['ts']-self.t0,np.abs(rdict['V3cplxradius']),'ro')
+        self.ciplots[1,1].canvas.ax1.plot(rdict['ts']-self.t0,np.abs(rdict['V4cplxradius']),'bo')
 
-        self.ciplots[0,0].canvas.ax1.plot(t,par[:,0],'ro')
-        self.ciplots[0,1].canvas.ax1.plot(t,par[:,2],'bo')
+        self.ciplots[0,0].canvas.ax1.set_ylabel('r(V2 meas)')
+        self.ciplots[0,1].canvas.ax1.set_ylabel('r(V1 set)')
+        self.ciplots[1,0].canvas.ax1.set_ylabel('r(V3 meas)')
+        self.ciplots[1,1].canvas.ax1.set_ylabel('r(V4 meas)')
 
-        self.ciplots[1,0].canvas.ax1.plot(t,par[:,1],'ro')
-        self.ciplots[1,1].canvas.ax1.plot(t,par[:,3],'bo')
         for j in range(2):
             for i in range(2):
                  self.ciplots[i,j].canvas.draw()
