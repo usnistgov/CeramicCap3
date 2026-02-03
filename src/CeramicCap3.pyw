@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self.tza2 = TZA.TZA(self.tzaport[0])
         self.t0=time.time()
         self.config =CCConfig.CCC()
+        self.Npts = 8  # This is the number of double points, i.e.  the numbe rof points in the circle
         self.ver = 3.0
         self.quit=False
         self.loopfinished=False
@@ -195,16 +196,12 @@ class MainWindow(QMainWindow):
         self.rg1.buttonToggled.connect(self.rb1Toggled)
         self.rg2.buttonToggled.connect(self.rb2Toggled)
 
-        #self.rightwindow = RightWindowWidget(self)     
-        #glayout.addWidget(self.rightwindow)
-
-        #glayout.addWidget(self.rightwindow)
         central_widget.setLayout(glayout)  
         
         
         self.progressBar = QProgressBar()
         self.progressBar.setMaximumWidth(400)
-        self.progressBar.setRange(0, 8)
+        self.progressBar.setRange(0, self.Npts*2)
         self.progressBar.setValue(0)
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
@@ -321,7 +318,7 @@ class MainWindow(QMainWindow):
     def newValues(self):
         self.dV = self.VF_dV.value()
 
-    def onNewData(self,MyData: CustomData.EightPoints):
+    def onNewData(self,MyData: CustomData.NPoints):
         self.rData = MyData             #recent data
         self.V1 = self.rData.Res['Vz4']
         if self.rData.goodData == True:
@@ -352,7 +349,7 @@ class MainWindow(QMainWindow):
     def goagain(self):
         if not self.quit:
             self.thread = QThread()
-            self.mydvm = Meas(self.mutex,self)
+            self.mydvm = Meas(self.mutex,self,self.Npts)
             self.mydvm.moveToThread(self.thread)
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
@@ -445,8 +442,8 @@ class MainWindow(QMainWindow):
         valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
         fn='CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         mykeys = ['fsig','ts','alpha3mean','beta3mean','alpha4mean','beta4mean',\
-                  'V2cplxcenter','V2cplxradius','V3cplxcenter','V3cplxradius',\
-                  'V4cplxcenter','V4cplxradius','V2setamp','V1setcplxcenter','V1setcplxradius',
+                  'V2cplxcenter','V2cplxradius','V2cplxangle','V3cplxcenter','V3cplxradius','V3cplxangle',\
+                  'V4cplxcenter','V4cplxradius','V4cplxangle','V2setamp','V1setcplxcenter','V1setcplxradius','V1setcplxangle',
                   'Vz3','Vz4']
         rdict = self.allData.getkeys(self.fsig,mykeys)
         L=0
@@ -469,13 +466,14 @@ class MainWindow(QMainWindow):
                 for k,v in rdict.items():    
                     a=v[n]
                     if  isinstance(a, complex):
-                        o+='{0:12.8f} {1:12.8f} '.format(a.real,a.imag)
+                        o+='{0:12.9f} {1:12.9f} '.format(a.real,a.imag)
                     else:
-                        o+='{0:12.8f} '.format(a)
+                        o+='{0:12.9f} '.format(a)
                 o+='\n'
                 file.write(o)
                 #file.write('# frequency/Hz t/s  a3 b3 a4 b4  x2 y2 r2  x3 y3 r3 x4 y4 r4 g1 g2 |V2| xV1set yV1set rV1set\n')
-        C=self.allData.getAveVolts(self.fsig,self.t0)
+        #C=self.allData.getAveVolts(self.fsig,self.t0)
+        C=self.allData.getRawPhasors(self.fsig,self.t0)
         fn='VOLT_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         if os.path.exists(os.path.join(bd0,fn))==False:
             with open(os.path.join(bd0,fn), "w") as file:
@@ -484,7 +482,7 @@ class MainWindow(QMainWindow):
             for n in range(np.shape(C)[0]):
                 o = '{0:6.0f} {1:6.1f} '.format(C[n,0],C[n,1])
                 for k in range(2,np.shape(C)[1]):
-                    o+='{0:14.6f} '.format(C[n,k])
+                    o+='{0:15.8f} '.format(C[n,k])
                 o+='\n'
                 file.write(o)
 
@@ -503,9 +501,9 @@ class MainWindow(QMainWindow):
         self.scatterplots[1,1].canvas.ax1.plot(np.real(self.rData.ave4[:,3]),\
                                                 np.imag(self.rData.ave4[:,3]),'mo')
         
-        self.scatterplots[0,1].canvas.ax1.plot(*self.rData.Cir[1].plot_mycircle(),'g-')
-        self.scatterplots[1,0].canvas.ax1.plot(*self.rData.Cir[2].plot_mycircle(),'b-')
-        self.scatterplots[1,1].canvas.ax1.plot(*self.rData.Cir[3].plot_mycircle(),'m-')
+        self.scatterplots[0,1].canvas.ax1.scatter(**self.rData.Cir[1].plot_mycircle(),marker='.', s=1,cmap='Greens')
+        self.scatterplots[1,0].canvas.ax1.scatter(**self.rData.Cir[2].plot_mycircle(),marker='.', s=1,cmap='Blues')
+        self.scatterplots[1,1].canvas.ax1.scatter(**self.rData.Cir[3].plot_mycircle(),marker='.', s=1,cmap='Purples')
 
             #if self.cbaxes.isChecked():
             #    self.scatterplots[1,0].canvas.ax1.axhline()

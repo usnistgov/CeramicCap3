@@ -4,8 +4,8 @@ import os
  
 class CCC():
     def __init__(self):
-        self.capdict={'100PF':1e-10,'1000PF':1e-9,'1NF':1e-9,'10NF':1e-8,'100NF':1e-7,'1000NF':1e-6,'1UF':1e-6,'10UF':1e-5}        
-        self.recapdir={1e-10:'100pF',1e-9:'1nF',1e-8:'10nF',1e-7:'100nF', 1e-6:'1uF',1e-5:'10uF'}
+        self.capdict={'10PF':1e-11,'100PF':1e-10,'1000PF':1e-9,'1NF':1e-9,'10NF':1e-8,'100NF':1e-7,'1000NF':1e-6,'1UF':1e-6,'10UF':1e-5}        
+        self.recapdir={1e-11:'10pF',1e-10:'100pF',1e-9:'1nF',1e-8:'10nF',1e-7:'100nF', 1e-6:'1uF',1e-5:'10uF'}
         self.cwd =  os.getcwd()
         self.cfgpath=r"c:\python\CeramicCap3\data\config.ini"
         self.cp = configparser.ConfigParser()

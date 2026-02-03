@@ -389,7 +389,6 @@ class FourCplxPts():
     """
     def __init__(self,data):
         self.data = data
-
         self.cplxcenter,self.cplxradius,self.C2 = self.fit_circle(np.real(data),np.imag(data))
 
     def plot_circle(self,par):
@@ -414,6 +413,157 @@ class FourCplxPts():
         chi2 = np.sum((residuals/sigma)**2)
         return c0, cr,chi2
 
+
+
+class FourPlusCplxPts():
+    """
+    For the ellipse fitting, we need at least 6 non colinaear points.
+    Fittign algorithm:
+       A.~Fitzgibbon, M.~Pilu, and R.~B.~Fisher, 
+       ``Direct least square fitting of ellipses,'' 
+       \emph{IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol.~21, no.~5, pp.~476--480, May 1999.
+    """
+    def __init__(self,data):
+        self.data = data
+
+        self.cplxcenter,self.cplxradius,self.cplxangle,self.C2 = self.fit_ellipse(np.real(data),np.imag(data))
+
+    def plot_circle(self,par):
+        cplxcenter, cplxsemi,cplxangle =par
+        angle = np.imag(cplxangle)
+        t    =   np.linspace(0,2*np.pi,200)
+        
+        outx = np.real(cplxcenter) + np.real(cplxsemi)*np.cos(t)*np.cos(angle) - np.imag(cplxsemi)*np.sin(t)*np.sin(angle)
+        outy = np.imag(cplxcenter) + np.real(cplxsemi)*np.cos(t)*np.sin(angle) + np.imag(cplxsemi)*np.sin(t)*np.cos(angle)
+        col = t-np.real(cplxangle)
+        return {'x':outx,'y':outy,'c':col}
+
+
+        return outx,outy
+
+    def plot_mycircle(self):
+        return self.plot_circle([self.cplxcenter,self.cplxradius,self.cplxangle])
+
+
+    def fit_ellipse(self,x, y):
+        """
+        Fits an ellipse to a set of points (x, y) using the Fitzgibbon Direct Least Squares method.
+        Returns the geometric parameters: center, width, height, and angle.
+        """
+        x = np.array(x)
+        y = np.array(y)
+        # --- 1. Construct the Design Matrix D: Form: Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
+        D = np.vstack([x**2, x*y, y**2, x, y, np.ones_like(x)]).T       
+        # --- 2. Construct the Scatter Matrix S ---
+        S = np.dot(D.T, D)
+        # --- 3. Construct the Constraint Matrix C ---
+        # Constraint: 4AC - B^2 = 1
+        C = np.zeros((6, 6))
+        C[0, 2] = C[2, 0] = 2
+        C[1, 1] = -1
+
+        # --- 4. Solve Generalized Eigensystem ---
+        # We want to solve S*a = lambda*C*a. 
+        # Since C is singular, we solve inv(S)*C*a = (1/lambda)*a
+        # This is equivalent to finding eigenvalues of inv(S) @ C
+        
+        try:
+            # Note: In some robust implementations, you might use scipy.linalg.eig
+            # but numpy.linalg.eig is usually sufficient for this scope.
+            E, V = np.linalg.eig(np.dot(np.linalg.inv(S), C))
+        except np.linalg.LinAlgError:
+            print("Singular matrix encountered. Points may be collinear.")
+            return None
+
+        # --- 5. Find the Single Positive Eigenvalue ---
+        # The solution corresponds to the eigenvector with the only positive eigenvalue
+        n = np.argmax(E)
+        a_vec = V[:, n]
+        a,b,c,d,e,f = a_vec
+
+        if np.abs(a)<1e-8:
+            cx = np.mean(x)
+            cy = np.mean(y)
+            major=0
+            minor=0
+            theta = 0
+        else:
+            cx, cy, major, minor, theta = self.cart_to_pol(a_vec)
+
+
+        # --- 6. Convert Algebraic Coefficients to Geometric Parameters ---
+        # a_vec = [A, B, C, D, E, F]
+
+     
+        test_x = cx + minor * np.cos(theta)
+        test_y = cy + minor * np.sin(theta)
+        
+        # 2. Calculate the algebraic residual for this point: Ax^2 + Bxy + ...
+        # Note: We use the `a, b, c, d, e, f` coefficients from the fit
+        residual_at_minor = (a * test_x**2 + b * test_x * test_y + c * test_y**2 + 
+                            d * test_x + e * test_y + f)
+
+        # 3. Compare with a test point at distance `major`
+        test_x_maj = cx + major * np.cos(theta)
+        test_y_maj = cy + major * np.sin(theta)
+        residual_at_major = (a * test_x_maj**2 + b * test_x_maj * test_y_maj + c * test_y_maj**2 + 
+                            d * test_x_maj + e * test_y_maj + f)
+        
+        # 4. Decide
+        # If the point at distance `minor` has a lower error, then `theta`
+        # was actually pointing to the Minor axis.
+        if abs(residual_at_minor) < abs(residual_at_major):
+            # We want theta to always point to the Major axis for consistency.
+            # So we rotate it by 90 degrees.
+            theta += np.pi / 2
+        rpts = np.sqrt((x-cx)**2+(y-cy)**2)
+        phi = np.arctan2(y-cy,x-cx)
+        phi_rel = phi-theta
+        numerator = major * minor
+        denominator = np.sqrt((minor * np.cos(phi_rel))**2 + (major * np.sin(phi_rel))**2)
+        rellipse = numerator / denominator
+        residuals = rpts - rellipse
+        c2 = sum(residuals**2)       
+        phi0 = np.arctan2(y[0]-cy,x[0]-cx)
+ 
+        return    cx+1j*cy, major+1j*minor, phi0+1j*theta,c2
+
+    def cart_to_pol(self,coeffs):
+        """
+        Converts algebraic ellipse coefficients to geometric parameters.
+        """
+        a, b, c, d, e, f = coeffs
+        # The formulas below are derived from the general conic equation
+        b2 = b**2
+        a_minus_c = a - c       
+        # Tolerance for circle case (b=0, a=c)
+        if b == 0 and abs(a - c) < 1e-6:
+            # It is a circle
+            cx = -d / (2*a)
+            cy = -e / (2*a)
+            radius = np.sqrt((d**2 + e**2) / (4*a**2) - f/a)
+            return cx, cy, radius, radius, 0.0
+        # 1. Calculate the center (h, k)
+        num = b2 - 4*a*c
+        cx = (2*c*d - b*e) / num
+        cy = (2*a*e - b*d) / num
+        # 2. Calculate the Angle (theta)
+        # The angle of the major axis relative to the x-axis
+        # Note: different sources use different definitions (major vs minor).
+        # This formula typically gives the angle of the ellipse's rotation.
+        theta = 0.5 * np.arctan2(b, a_minus_c) + np.pi/2
+        # 3. Calculate Semi-Axes lengths
+        # Using the standard conversion formulas
+        up = 2 * (a*e**2 + c*d**2 - b*d*e + (b2 - 4*a*c)*f)
+        down1 = (b2 - 4*a*c) * ((a + c) + np.sqrt((a - c)**2 + b2))
+        down2 = (b2 - 4*a*c) * ((a + c) - np.sqrt((a - c)**2 + b2))
+        # We use abs() because the sign of the eigenvector is arbitrary
+        res1 = np.sqrt(abs(up / down1))
+        res2 = np.sqrt(abs(up / down2))
+        # Major axis is the larger one
+        major_axis = max(res1, res2)
+        minor_axis = min(res1, res2)
+        return cx, cy, major_axis, minor_axis, theta        
 
 
 
