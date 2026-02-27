@@ -89,8 +89,8 @@ class MainWindow(QMainWindow):
         self.thread = QThread()
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        self.V1 = 1.811+2.578j
-        self.V2 = -9.9+0j
+        self.V2 = 1.811+2.578j
+        self.V1 = -9.9+0j
         self.dV = 0.1
         self.g1 = 10000
         self.g2 = 100
@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
         self.firstgood=False
         
         self.fsigold = -1
-        self.rData = CustomData.EightPoints(1000,800000)
+        self.rData = CustomData.NPoints(1000,800000)
         self.rSet  = CustomData.FourChannels(1000,800000,2,[],[],[],[],0,0,0,ts=-1)
         self.allData = CustomData.AllData()
         self.myprint(f"Welcome to Version {self.ver}")
@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
 
     def onNewData(self,MyData: CustomData.NPoints):
         self.rData = MyData             #recent data
-        self.V1 = self.rData.Res['Vz4']
+        self.V2 = self.rData.Res['Vz4']
         if self.rData.goodData == True:
             if self.firstgood==True:
                 self.allData.append(self.rData)
@@ -334,13 +334,13 @@ class MainWindow(QMainWindow):
                 self.fp()
         self.replot()
 
-    def calcVsmall(self,f,V2=-9.0,R=50):
+    def calcVsmall(self,f,V1=-9.0,R=50):
         C42 =self.C42
         C41 =self.C41
         iw = 1j*f*2*np.pi
-        I2 = V2*iw*C42/(1+iw*C42*R)
-        V1=-I2*(R+1/(iw*C41))
-        return V1
+        I1 = V1*iw*C42/(1+iw*C42*R)
+        V2=-I1*(R+1/(iw*C41))
+        return V2
 
 
 
@@ -354,7 +354,7 @@ class MainWindow(QMainWindow):
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
             if self.fsigold == self.fsig:
-                while np.abs(self.V1)>9:
+                while np.abs(self.V2)>9:
                     self.V1=self.V1*0.9
                     self.V2=self.V2*0.9
                 self.mydvm.storeV(self.V1,self.V2,self.dV,self.fsig,self.g1,self.g2)    
@@ -366,12 +366,12 @@ class MainWindow(QMainWindow):
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
                 self.firstgood= False
-                self.V2 = -9.9+0j
-                self.V1 = self.calcVsmall(self.fsig,V2=self.V2)
-                while np.abs(self.V1)>9:
-                    self.V2 = self.V2*0.9
-                    self.V1 = self.calcVsmall(self.fsig,V2=self.V2)
-                self.dV = np.abs(self.V1)/100
+                self.V1 = -9.9+0j
+                self.V2 = self.calcVsmall(self.fsig,V1=self.V1)
+                while np.abs(self.V2)>9:
+                    self.V1 = self.V1*0.9
+                    self.V2 = self.calcVsmall(self.fsig,V1=self.V1)
+                self.dV = np.abs(self.V2)/100
                 #self.myprint('New f={0:8.0f} kHz V1={1:4.3f} + {2:4.3f}i  dV={3:4.3f}'.format(self.fsig/1000,np.real(self.V1),np.imag(self.V1),self.dV))
                 self.mydvm.storeV(self.V1,self.V2,self.dV,self.fsig,self.g1,self.g2)        
             self.laUpdate()
@@ -443,7 +443,7 @@ class MainWindow(QMainWindow):
         fn='CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         mykeys = ['fsig','ts','alpha3mean','beta3mean','alpha4mean','beta4mean',\
                   'V2cplxcenter','V2cplxradius','V2cplxangle','V3cplxcenter','V3cplxradius','V3cplxangle',\
-                  'V4cplxcenter','V4cplxradius','V4cplxangle','V2setamp','V1setcplxcenter','V1setcplxradius','V1setcplxangle',
+                  'V4cplxcenter','V4cplxradius','V4cplxangle','V1setamp','V2setcplxcenter','V2setcplxradius','V2setcplxangle',
                   'Vz3','Vz4']
         rdict = self.allData.getkeys(self.fsig,mykeys)
         L=0

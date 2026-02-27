@@ -50,7 +50,7 @@ class FourChannels:
             self.Data[i].setfmin(fmin)
             self.Data[i].fit()
 
-
+"""
 class EightPoints:
     def __init__(self,fsig,fsamp,Nhars=2,g1=1,g2=1,ratio=10):
         self.Res={}
@@ -65,7 +65,7 @@ class EightPoints:
         self.Data = np.zeros(8,dtype=object)
 
     def setPoint(self,i,ch1,ch2,ch3,ch4,V1c,V2c,ts):
-        self.V2c=V2c
+        self.V1c=V1c
         self.Data[i] = FourChannels(self.Res['fsig'],self.Res['fsamp'],self.Res['Nhars'],\
                                     ch1,ch2,ch3,ch4,V1c,V2c,i,ts)
         self.ats[i] =ts
@@ -94,14 +94,14 @@ class EightPoints:
             if i>0:
                 self.Res[la[i*2]]= self.Cir[i].cplxcenter
                 self.Res[la[i*2+1]]= self.Cir[i].cplxradius
-        self.Res['V2setamp']= self.V2c
-        self.V1fit= R2FMath.FourCplxPts(self.ctrla[:,0])        
-        self.Res['V1setcplxcenter']= self.V1fit.cplxcenter
-        self.Res['V1setcplxradius']= self.V1fit.cplxradius
+        self.Res['V1setamp']= self.V1c
+        self.V2fit= R2FMath.FourCplxPts(self.ctrla[:,1])        
+        self.Res['V2setcplxcenter']= self.V2fit.cplxcenter
+        self.Res['V2setcplxradius']= self.V2fit.cplxradius
 
-        self.pars3,self.vals3,self.errs3,self.Chi3,self.Cov3 = R2FMath.mycomplexfit(self.ctrla[:,0],\
+        self.pars3,self.vals3,self.errs3,self.Chi3,self.Cov3 = R2FMath.mycomplexfit(self.ctrla[:,1],\
                              self.ave4[:,2])
-        self.pars4,self.vals4,self.errs4,self.Chi4,self.Cov4 = R2FMath.mycomplexfit(self.ctrla[:,0],\
+        self.pars4,self.vals4,self.errs4,self.Chi4,self.Cov4 = R2FMath.mycomplexfit(self.ctrla[:,1],\
                              self.ave4[:,3])
         result3=-(self.pars3[0]+1j*self.pars3[1])/(self.pars3[2]+1j*self.pars3[3])                
         result4=-(self.pars4[0]+1j*self.pars4[1])/(self.pars4[2]+1j*self.pars4[3])        
@@ -131,12 +131,13 @@ class EightPoints:
         self.setGoodFlag()
 
     def setGoodFlag(self):
+        print(r"Here is setGoodFlag: {self.Res['V3cplxcenter']} {self.Res['V4cplxcenter']}")
         self.goodData=True
         if abs(self.Res['V3cplxcenter'])>1:
             self.goodData=False
         if abs(self.Res['V4cplxcenter'])>1:
             self.goodData=False
-
+"""
 
 class NPoints:
     def __init__(self,fsig,fsamp,Nhars=2,g1=1,g2=1,ratio=10,N=8):
@@ -153,15 +154,14 @@ class NPoints:
         self.Data = np.zeros(N,dtype=object)
 
     def setPoint(self,i,ch1,ch2,ch3,ch4,V1c,V2c,ts):
-        self.V2c=V2c
+        self.V1c=V1c
         self.Data[i] = FourChannels(self.Res['fsig'],self.Res['fsamp'],self.Res['Nhars'],\
                                     ch1,ch2,ch3,ch4,V1c,V2c,i,ts)
         self.ats[i] =ts
         if min(self.ats)>0:
             self.Res['ts'] = np.mean(self.ats)
 
-
-    def calc(self):
+    def precalc(self):
         self.raw8 = np.zeros((self.N,4),dtype=complex)
         self.ctrl = np.zeros((self.N,2),dtype=complex)
         for i in range(self.N):
@@ -173,27 +173,35 @@ class NPoints:
             self.ctrl[i,1] =self.Data[i].V2c
         self.ave4  = 0.5*(self.raw8[::2,:]+self.raw8[1::2,:])
         self.ctrla = 0.5*(self.ctrl[::2,:]+self.ctrl[1::2,:])
+
+    def calc(self):
+        self.precalc()
         self.Cir = np.zeros(self.N//2,dtype=object)
         self.Ccirpar =[]
         la=['V1cplxcenter','V1cplxradius','V1cplxangle','V2cplxcenter','V2cplxradius','V2cplxangle',\
             'V3cplxcenter','V3cplxradius','V3cplxangle','V4cplxcenter','V4cplxradius','V4cplxangle']
         for i in range(4):
-            self.Cir[i] = R2FMath.FourPlusCplxPts(self.ave4[:,i])
-            #R2FMath.FourCplxPts(self.ave4[:,i])
-            if i>0:
+            if i!=0:
+                self.Cir[i] = R2FMath.FourPlusCplxPts(self.ave4[:,i])
+                #R2FMath.FourCplxPts(self.ave4[:,i])
                 self.Res[la[i*3]]= self.Cir[i].cplxcenter
                 self.Res[la[i*3+1]]= self.Cir[i].cplxradius
                 self.Res[la[i*3+2]]= self.Cir[i].cplxangle
+            else:
+                self.Res[la[i*3]]= np.mean(self.ave4[:,i])
+                self.Res[la[i*3+1]]= 1e-20
+                self.Res[la[i*3+2]]= 0
 
-        self.Res['V2setamp']= self.V2c
-        self.V1fit= R2FMath.FourPlusCplxPts(self.ctrla[:,0])        
-        self.Res['V1setcplxcenter']= self.V1fit.cplxcenter
-        self.Res['V1setcplxradius']= self.V1fit.cplxradius
-        self.Res['V1setcplxangle']= self.V1fit.cplxangle
+        self.Res['V1setamp']= self.V1c
+        self.V2fit= R2FMath.FourPlusCplxPts(self.ctrla[:,1])        
+        self.Res['V2setcplxcenter']= self.V2fit.cplxcenter
+        self.Res['V2setcplxradius']= self.V2fit.cplxradius
+        self.Res['V2setcplxangle']= self.V2fit.cplxangle
 
-        self.pars3,self.vals3,self.errs3,self.Chi3,self.Cov3 = R2FMath.mycomplexfit(self.ctrla[:,0],\
+
+        self.pars3,self.vals3,self.errs3,self.Chi3,self.Cov3 = R2FMath.mycomplexfit(self.ctrla[:,1],\
                              self.ave4[:,2])
-        self.pars4,self.vals4,self.errs4,self.Chi4,self.Cov4 = R2FMath.mycomplexfit(self.ctrla[:,0],\
+        self.pars4,self.vals4,self.errs4,self.Chi4,self.Cov4 = R2FMath.mycomplexfit(self.ctrla[:,1],\
                              self.ave4[:,3])
         result3=-(self.pars3[0]+1j*self.pars3[1])/(self.pars3[2]+1j*self.pars3[3])                
         result4=-(self.pars4[0]+1j*self.pars4[1])/(self.pars4[2]+1j*self.pars4[3])        

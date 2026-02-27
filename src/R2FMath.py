@@ -65,7 +65,7 @@ def fit_sine_cplx(y,rf):
 
 
 
-def fit_sine_cplx(y,rf,Nhars=0):
+def fit_sine_cplx(y,rf,useHann=True):
     """
     rf = relative frequency = f0/fs.
     sin(w t)= sin (2*pi*f0 *i/fs)= sin(2*pi*i *f0/fs)
@@ -83,21 +83,23 @@ def fit_sine_cplx(y,rf,Nhars=0):
     O = np.ones(len(y))
     C = np.cos(wt)
     S = np.sin(wt)
-    X = np.vstack((O,C,S))
-    i=2
-    if i-2<Nhars:
-        C = np.cos(wt*i)
-        S = np.sin(wt*i)
-        i=i+1
-        X = np.vstack((X,C,S))    
-    X = np.matrix(X.T)
-    fit_pars=((X.T*X).I)*X.T*np.matrix(y).T
+    X = np.matrix(np.vstack((O,C,S)).T)
+    if useHann:
+        #W_vec = np.blackman(len(y))
+        W_vec = np.hanning(len(y))
+        yw = y * W_vec
+        Ow = O * W_vec
+        Cw = C * W_vec
+        Sw = S * W_vec        
+        Xw = np.matrix(np.vstack((Ow,Cw,Sw)).T)
+        fit_pars=((Xw.T*Xw).I)*Xw.T*np.matrix(yw).T
+    else:
+        fit_pars=((X.T*X).I)*X.T*np.matrix(y).T
     fit_vals =np.array( X*fit_pars)[:,0]  
     C2 = np.dot(y-fit_vals,y-fit_vals)
     NDF = len(y)-3
     errv = np.sqrt(C2/NDF)
     return fit_pars[1,0]-1j*fit_pars[2,0],fit_vals,errv
-
 
 def get_f(y,rf):
     """
@@ -426,6 +428,7 @@ class FourPlusCplxPts():
     def __init__(self,data):
         self.data = data
 
+        #print(self.fit_ellipse(np.real(data),np.imag(data)))
         self.cplxcenter,self.cplxradius,self.cplxangle,self.C2 = self.fit_ellipse(np.real(data),np.imag(data))
 
     def plot_circle(self,par):

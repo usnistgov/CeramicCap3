@@ -64,11 +64,25 @@ allData = CustomData.AllData()
 for co in range(16):
     V1rb,V2rb =  setAmp(co)
     ch1,ch2,ch3, ch4 = simulator(V1rb,V2rb, fsig, fsamp, Nsamp,1e-10,1e-9,1e-10,1e-9)
-    rawN.setPoint(co,ch1,ch2,ch3,ch4,V2rb,V1rb,time.time())    
+    rawN.setPoint(co,ch1,ch2,ch3,ch4,V1rb,V2rb,time.time())    
     #V1rb amd 2rb are switched here bc of the channel issue
 print()
+fig,ax = plt.subplots(2,2)
+ax=ax.flatten()
+for j in range(4):
+    for i in range(16):
+        ax[j].plot(np.real(rawN.Data[i].Data[j].Vc),np.imag(rawN.Data[i].Data[j].Vc),'ro')
+#%%
+rawN.precalc()
+fig,ax = plt.subplots(2,2)
+ax=ax.flatten()
+for j in range(4):
+    ax[j].plot(np.real(rawN.ave4[:,j]),np.imag(rawN.ave4[:,j]),'ro')
+#%%
 rawN.calc()
-allData.append(rawN)
+
+#%% 
+# allData.append(rawN)
 #%%
 fig,ax = plt.subplots(2,2)
 ax=ax.flatten()

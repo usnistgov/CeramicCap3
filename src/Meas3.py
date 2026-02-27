@@ -59,18 +59,18 @@ class Meas(QObject):
             print(ostr)
         time.sleep(0.001)
  
-    def storeV(self,V1c,V2c,dV1,fsig,g1,g2):
+    def storeV(self,V1c,V2c,dV2,fsig,g1,g2):
         if self.isidle:
             self.V1c=V1c
             self.V2c=V2c
-            self.dV1 = dV1
+            self.dV2 = dV2
             self.fsig = fsig
             self.g1 = g1
             self.g2 = g2
         
     def prepForMeas(self):
         if self.co==0:
-            self.par.myprint("V1= {0:8.3f}  V2={1:8.3f} dV1={2:8.3f}  f={3:5.1f} kHz".format(self.V1c,self.V2c,self.dV1,self.fsig/1000))
+            self.par.myprint("V1= {0:8.3f}  V2={1:8.3f} dV2={2:8.3f}  f={3:5.1f} kHz".format(self.V1c,self.V2c,self.dV2,self.fsig/1000))
         if self.co%2==0:
             self.dvm.write('ROUT:OPEN (@211,248)')   
             self.dvm.write('ROUT:CLOS (@218,241)') # 8->1 1->4
@@ -78,19 +78,11 @@ class Meas(QObject):
             self.dvm.write('ROUT:OPEN (@218,241)')   
             self.dvm.write('ROUT:CLOS (@211,248)') # 1->1 8->4
         ang = (self.co//2)/self.NDpts*2*np.pi
-        a = self.dV1*1.2
-        b = self.dV1*0.8
+        a = self.dV2*1.2
+        b = self.dV2*0.8
         theta = 30/180*np.pi
-        self.V1 = self.V1c+np.exp(1j*theta)*(a*np.cos(ang)+1j*b*np.sin(ang))
-        #if self.co%8==0 or self.co%8==1:
-            #self.V1 = self.V1c+self.dV1
-        #elif self.co%8==2 or self.co%8==3:
-            #self.V1 = self.V1c-self.dV1
-        #elif self.co%8==4 or self.co%8==5:
-            #self.V1 = self.V1c+1j*self.dV1
-        #else:
-            #self.V1 = self.V1c-1j*self.dV1
-        self.V2 = self.V2c
+        self.V2 = self.V2c+np.exp(1j*theta)*(a*np.cos(ang)+1j*b*np.sin(ang))
+        self.V1 = self.V1c
         V1amp   = np.abs(self.V1)
         V2amp   = np.abs(self.V2)
         if V1amp>=10.0:
