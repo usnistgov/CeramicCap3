@@ -699,3 +699,164 @@ class Aset():
                 a.set_ylabel('D(f) '+mul[n//2])
         return fig,ax
 
+import numpy as np
+from dataclasses import dataclass
+
+@dataclass
+class ComplexEllipse:
+    """
+    Represents an ellipse parameterized by counter-rotating complex amplitudes.
+    Optimized for R2F converter signal processing.
+    """
+    eta_o: complex
+    eta_ccw: complex
+    eta_cw: complex
+
+    @property
+    def center(self) -> tuple[float, float]:
+        """Returns the geometric center (cx, cy)."""
+        return np.real(self.eta_o), np.imag(self.eta_o)
+
+    @property
+    def semi_major(self) -> float:
+        """Returns the semi-major axis length."""
+        return complex(self.eta_ccw + self.eta_cw)
+
+    @property
+    def semi_minor(self) -> float:
+        """Returns the semi-minor axis length."""
+        return complex((self.eta_ccw - self.eta_cw)*np.exp(1j*np.pi/2))
+
+    @property
+    def angle(self) -> float:
+        """Returns the rotation angle in radians."""
+        return float(np.angle(self.eta_ccw + self.eta_cw))
+
+    def evaluate(self, N: int = 100) -> np.ndarray:
+        """Generates the complex trajectory for N points."""
+        n = np.arange(N)
+        phase = 2 * np.pi * n / N
+        return self.eta_o + self.eta_ccw * np.exp(1j * phase) + self.eta_cw * np.exp(-1j * phase)
+
+    @classmethod
+    def fit_from_points(cls, x: np.ndarray, y: np.ndarray):
+        """
+        Fits an ellipse to (x,y) data using the Fitzgibbon Direct Least Squares method
+        and returns a pure ComplexEllipse instance.
+        """
+        x = np.array(x)
+        y = np.array(y)
+        
+        # 1. Construct matrices
+        D = np.vstack([x**2, x*y, y**2, x, y, np.ones_like(x)]).T       
+        S = np.dot(D.T, D)
+        
+        C = np.zeros((6, 6))
+        C[0, 2] = C[2, 0] = 2
+        C[1, 1] = -1
+
+        # 2. Solve the eigensystem
+        try:
+            epsilon = 1e-10  # Regularization for noiseless edge cases
+            S = S + epsilon * np.eye(6)
+            E, V = np.linalg.eig(np.dot(np.linalg.inv(S), C))
+        except np.linalg.LinAlgError:
+            return None
+
+        # 3. Extract algebraic coefficients
+        n = np.argmax(E)
+        A, B, C_coeff, D_coeff, E_coeff, F = V[:, n]
+
+        # 4. Convert Algebraic to Geometric Parameters
+        # Center coordinates
+        denominator = B**2 - 4 * A * C_coeff
+        if denominator >= 0:
+            return None # Not an ellipse
+            
+        cx = (2 * C_coeff * D_coeff - B * E_coeff) / denominator
+        cy = (2 * A * E_coeff - B * D_coeff) / denominator
+
+        # Semi-axes lengths
+        numerator = 2 * (A * E_coeff**2 + C_coeff * D_coeff**2 - B * D_coeff * E_coeff + denominator * F)
+        term2 = np.sqrt((A - C_coeff)**2 + B**2)
+        
+        axis1 = np.sqrt(abs(numerator / (denominator * (A + C_coeff + term2))))
+        axis2 = np.sqrt(abs(numerator / (denominator * (A + C_coeff - term2))))
+        
+        major = max(axis1, axis2)
+        minor = min(axis1, axis2)
+        # Rotation angle
+        theta = 0.5 * np.arctan2(B, A - C_coeff)
+        phi = np.arctan2(y-cy,x-cx)        
+        x_unrotated = major * np.cos(phi)
+        y_unrotated = minor * np.sin(phi)
+        test1_x = x_unrotated * np.cos(theta) - y_unrotated * np.sin(theta) + cx
+        test1_y = x_unrotated * np.sin(theta) + y_unrotated * np.cos(theta) + cy
+
+        residual1  = (A * test1_x**2 + B * test1_x * test1_y + C_coeff * test1_y**2 + 
+                             D_coeff * test1_x + E_coeff * test1_y + F)
+        res1= np.dot(residual1 ,residual1 )
+        test2_x = x_unrotated * np.cos(theta+np.pi/2) - y_unrotated * np.sin(theta+np.pi/2) + cx
+        test2_y = x_unrotated * np.sin(theta+np.pi/2) + y_unrotated * np.cos(theta+np.pi/2) + cy
+
+        residual2  = (A * test2_x**2 + B * test2_x * test2_y + C_coeff * test2_y**2 + 
+                             D_coeff * test2_x + E_coeff * test2_y + F)
+        res2= np.dot(residual2 ,residual2 )
+
+        if res2<res1:
+            theta+=np.pi/2
+            c2=res2
+        else:
+            c2=res1
+
+        phi0 = np.arctan2(y[0]-cy,x[0]-cx)
+        #print(phi0,theta)
+        
+
+        # 5. Calculate Counter-Rotating Complex Amplitudes
+        eta_o = cx + 1j * cy
+        #phase_factor = np.exp(1j * theta)
+
+        a = np.exp(1j*phi0)
+        b = np.exp(1j*theta)
+        c = np.exp(1j*(theta+np.pi))
+        if abs(np.angle(c/a))<np.abs(np.angle(b/a)):
+            theta = theta+np.pi
+        
+
+        #phase_factor = np.exp(1j * phi0)
+        phase_factor = np.exp(1j * theta)
+        eta_ccw = 0.5 * (major + minor) * phase_factor
+        eta_cw = 0.5 * (major - minor) * phase_factor
+
+        return cls(eta_o=eta_o, eta_ccw=eta_ccw, eta_cw=eta_cw)
+    
+    @classmethod
+    def fit_from_cmplx_points(cls, cplx):
+        return cls.fit_from_points(np.real(cplx),np.imag(cplx))
+
+    
+    # Inside your ComplexEllipse dataclass in R2FMath.py
+
+    def simulate_noisy_data(self, N: int, noise_std: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Generates N points along the ellipse with optional Gaussian noise.
+        Returns a tuple of (x_array, y_array) to be used for testing.
+        """
+        # 1. Get the perfect mathematical path
+        z_perfect = self.evaluate(N)
+        
+        # 2. Add random Gaussian noise to the real and imaginary parts
+        x = np.real(z_perfect) + np.random.normal(0, noise_std, N)
+        y = np.imag(z_perfect) + np.random.normal(0, noise_std, N)
+        
+        return x, y
+    
+    def plot_elli(self,ax,ellipse_color='k',maj_color='r',min_color='b'):
+        data = self.evaluate()
+        ax.plot(np.real(data),np.imag(data),linestyle='-',color=ellipse_color)
+        l1 = np.array([self.eta_o,self.eta_o+self.semi_major])
+        l2 = np.array([self.eta_o,self.eta_o+self.semi_minor])
+        ax.plot(np.real(l1),np.imag(l1),linestyle='-.',color= maj_color)
+        ax.plot(np.real(l2),np.imag(l2),linestyle=':',color=min_color)
+      
