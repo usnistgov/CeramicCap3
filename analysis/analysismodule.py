@@ -1,0 +1,143 @@
+import numpy as np
+import sys
+import os
+sys.path.append('..')
+# Now Python can see the 'src' folder!
+import src.R2FMath as R2FMath
+
+class oneCap:
+    def __init__(self, bd, fn):
+        data = np.loadtxt(os.path.join(bd,fn))
+        self.ave = 0.5*(data[0:-1:2,:]+data[1::2,:])
+        self.ana=[]
+        self.meanV1 =[]
+        self.elliV2 =[]
+        self.elliV3 =[]
+        self.elliV4 =[]
+        self.elli2=[]
+        self.elli3=[]
+        self.elli4=[]
+        self.allf = []
+        for i in range(0, len(self.ave), 8):
+            block = self.ave[i : i + 8,:]
+            if len(block) < 8:
+                print(f"Processing final partial block of size {len(block)}")
+                break
+            f = np.mean(block[:,0])
+            self.allf.append(f)
+            V1 = (block[:,2]+1j*block[:,3])
+            V2 = (block[:,4]+1j*block[:,5])
+            V3 = (block[:,6]+1j*block[:,7])
+            V4 = (block[:,8]+1j*block[:,9])
+            self.meanV1.append(np.mean(V1))
+            self.elliV2.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V2))
+            self.elliV3.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V3))
+            self.elliV4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V4))
+
+            eta2 =  1000*V2/V1
+            eta3 =  1000*V3/V1
+            eta4 =  1000*V4/V1
+
+            elli2 = fitted_ellipse = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta2)
+            elli3 = fitted_ellipse = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta3)
+            elli4 = fitted_ellipse = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4)    
+            self.elli2.append(elli2)
+            self.elli3.append(elli3)
+            self.elli4.append(elli4)
+            #gain3 = (elli3.eta_cw/elli2.eta_cw+elli3.eta_ccw/elli2.eta_ccw)/2
+            #gain4 = (elli4.eta_cw/elli2.eta_cw+elli4.eta_ccw/elli2.eta_ccw)/2
+            
+            
+            g_left = elli2.eta_cw/elli3.eta_cw
+            g_right = elli2.eta_cw/elli4.eta_cw
+            
+            ratio3 = (g_left*elli3.eta_o-elli2.eta_o)/1000*10-1
+            ratio4 = (g_right*elli4.eta_o-elli2.eta_o)/1000*10-1
+
+            dratio = ratio4-ratio3
+
+            al_left     = -ratio3.real        # This is alpha_32 - alpha_31 ~ alpha_32
+            D_left      = ratio3.imag       # This is D_32 - D_31 ~ D_32
+            al_right    = -ratio4.real        # This is alpha_42 - alpha_41 ~ alpha_42
+            D_right     = ratio4.imag       # This is D_42 - D_41 ~ D_42
+            al_diff     = -dratio.real
+            D_diff      =  dratio.imag
+            line = np.hstack((f, np.abs(g_left), np.angle(g_left),al_left,D_left ,np.abs(g_right) ,np.angle(g_right), al_right,D_right,
+                              al_diff,D_diff))
+             #                 0    1                2              3     4          5             6                    7    8
+            self.ana.append(line)
+        self.ana= np.array(self.ana)
+        
+        self.ana_mean, self.ana_std =  self.average(self.ana)
+        self.f = self.ana_mean[:,0]
+
+    def average(self,output):
+        mydict = {}
+        for line in output:
+            f = line[0]
+            if  f not in mydict:
+                mydict[f] = np.array(line)
+            else:
+                mydict[f] = np.vstack((mydict[f] ,np.array(line)))
+        means =[]
+        stds =[]
+        for f in list(mydict):
+            if len(np.shape(mydict[f][1]))==1:
+                means.append(np.mean(mydict[f],axis=0))
+                stds.append(np.std(mydict[f],axis=0,ddof=1))
+            else:
+                means.append(np.array(mydict[f]))
+                stds.append(np.zeros_like(mydict[f]))
+        means = np.array(means)
+        stds = np.array(stds)
+
+        return means,stds                      
+
+
+
+class completeSet:
+    """
+    Assumes that the cap are sorted from smallest to largest. It can be 1,2,3,4,5, caps.
+    They must have measurements at teh same frequencies and that is not checked
+
+    """
+    def __init__(self,bds,fns,capvals):
+        self.myCaps=[]
+        for b,f in zip(bds,fns):
+            self.myCaps.append(oneCap(b,f))
+
+        self.f = self.myCaps[0].ana_mean[:,0]
+        self.w = 2*np.pi*self.f
+        alpha=[]
+        D =[]
+        R =[]
+        alpha0=[]  # difference from 1k
+        D0 =[]
+        R0 =[]
+        ix = np.argmin((self.f-1000)**2)
+        oldalpha = np.zeros_like(self.myCaps[0].ana_mean[:,9])
+        oldD     = np.zeros_like(self.myCaps[0].ana_mean[:,10])
+        for cap,val in zip(self.myCaps,capvals):
+            alpha.append(cap.ana_mean[:,9]+oldalpha)
+            D.append(cap.ana_mean[:,10]+oldD)
+            oldalpha = np.array(alpha[-1])
+            oldD     = np.array(D[-1])
+            alpha0.append(oldalpha-oldalpha[ix])
+            D0.append(oldD-oldD[ix])
+            R.append(1/self.w/oldD/val)
+            R0.append(1/self.w/oldD/val -1/self.w/oldD[ix]/val )
+        self.alpha = np.array(alpha)
+        self.D = np.array(D)
+        self.R = np.array(R)
+        self.alpha0 = np.array(alpha0)
+        self.D0 = np.array(D0)
+        self.R0 = np.array(R0)
+
+
+        
+
+
+
+
+
+
