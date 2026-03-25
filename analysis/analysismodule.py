@@ -49,7 +49,19 @@ class oneCap:
             
             
             g_left = elli2.eta_cw/elli3.eta_cw
-            g_right = elli2.eta_cw/elli4.eta_cw
+
+
+            y2 = elli2.semi_major/elli4.semi_major
+            y1 = elli2.semi_minor/elli4.semi_minor
+            x2 = elli2.semi_major
+            x1 = elli2.semi_minor
+            g_right = y1 -(y2-y1)/(x2-x1)*x1
+
+
+            #g_right = elli2.eta_cw/elli4.eta_cw
+
+
+            
             
             ratio3 = (g_left*elli3.eta_o-elli2.eta_o)/1000*10-1
             ratio4 = (g_right*elli4.eta_o-elli2.eta_o)/1000*10-1
@@ -70,6 +82,10 @@ class oneCap:
         
         self.ana_mean, self.ana_std =  self.average(self.ana)
         self.f = self.ana_mean[:,0]
+        indices = self.f.argsort()
+        self.f = self.f[indices]
+        self.ana_mean= self.ana_mean[indices,:]
+
 
     def average(self,output):
         mydict = {}
@@ -83,7 +99,7 @@ class oneCap:
         stds =[]
         for f in list(mydict):
             if len(np.shape(mydict[f][1]))==1:
-                means.append(np.mean(mydict[f],axis=0))
+                means.append(np.median(mydict[f],axis=0))
                 stds.append(np.std(mydict[f],axis=0,ddof=1))
             else:
                 means.append(np.array(mydict[f]))
@@ -117,6 +133,8 @@ class completeSet:
         ix = np.argmin((self.f-1000)**2)
         oldalpha = np.zeros_like(self.myCaps[0].ana_mean[:,9])
         oldD     = np.zeros_like(self.myCaps[0].ana_mean[:,10])
+        fvals = (self.myCaps[0].ana_mean[:,0])
+
         for cap,val in zip(self.myCaps,capvals):
             alpha.append(cap.ana_mean[:,9]+oldalpha)
             D.append(cap.ana_mean[:,10]+oldD)
