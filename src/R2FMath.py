@@ -744,11 +744,21 @@ class ComplexEllipse:
         Fits an ellipse to (x,y) data using the Fitzgibbon Direct Least Squares method
         and returns a pure ComplexEllipse instance.
         """
+        
+        
         x = np.array(x)
         y = np.array(y)
+
+        mx, my = np.mean(x), np.mean(y)
+        scale = np.max([np.std(x), np.std(y)]) 
+        if scale == 0: 
+            return None
         
+        xn = (x - mx) / scale
+        yn = (y - my) / scale
+
         # 1. Construct matrices
-        D = np.vstack([x**2, x*y, y**2, x, y, np.ones_like(x)]).T       
+        D = np.vstack([xn**2, xn*yn, yn**2, xn, yn, np.ones_like(xn)]).T       
         S = np.dot(D.T, D)
         
         C = np.zeros((6, 6))
@@ -803,18 +813,19 @@ class ComplexEllipse:
                              D_coeff * test2_x + E_coeff * test2_y + F)
         res2= np.dot(residual2 ,residual2 )
 
+        print(res2,res1)
         if res2<res1:
             theta+=np.pi/2
             c2=res2
         else:
             c2=res1
 
-        phi0 = np.arctan2(y[0]-cy,x[0]-cx)
+        phi0 = np.arctan2(yn[0]-cy,xn[0]-cx)
         #print(phi0,theta)
         
 
         # 5. Calculate Counter-Rotating Complex Amplitudes
-        eta_o = cx + 1j * cy
+        eta_o = cx*scale+mx + 1j *(( cy*scale) +my)
         #phase_factor = np.exp(1j * theta)
 
         a = np.exp(1j*phi0)
@@ -826,8 +837,8 @@ class ComplexEllipse:
 
         #phase_factor = np.exp(1j * phi0)
         phase_factor = np.exp(1j * theta)
-        eta_ccw = 0.5 * (major + minor) * phase_factor
-        eta_cw = 0.5 * (major - minor) * phase_factor
+        eta_ccw = 0.5 * (major + minor) * phase_factor *scale
+        eta_cw = 0.5 * (major - minor) * phase_factor *scale
 
         return cls(eta_o=eta_o, eta_ccw=eta_ccw, eta_cw=eta_cw)
     
