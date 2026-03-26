@@ -813,7 +813,6 @@ class ComplexEllipse:
                              D_coeff * test2_x + E_coeff * test2_y + F)
         res2= np.dot(residual2 ,residual2 )
 
-        print(res2,res1)
         if res2<res1:
             theta+=np.pi/2
             c2=res2
