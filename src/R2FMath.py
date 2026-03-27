@@ -866,11 +866,26 @@ class ComplexEllipse:
         
         return x, y
     
-    def plot_elli(self,ax,ellipse_color='k',maj_color='r',min_color='b'):
+    def plot_elli(self,ax,ellipse_color='k',maj_color='r',min_color='b',rescale=True):
         data = self.evaluate()
         ax.plot(np.real(data),np.imag(data),linestyle='-',color=ellipse_color)
         l1 = np.array([self.eta_o,self.eta_o+self.semi_major])
         l2 = np.array([self.eta_o,self.eta_o+self.semi_minor])
         ax.plot(np.real(l1),np.imag(l1),linestyle='-.',color= maj_color)
         ax.plot(np.real(l2),np.imag(l2),linestyle=':',color=min_color)
+        if rescale:
+            bex,enx = ax.get_xlim()
+            bey,eny = ax.get_ylim()
+            delx,mex = 0.5*(enx-bex), 0.5*(enx+bex)
+            dely,mey = 0.5*(eny-bey), 0.5*(eny+bey)
+            if delx>dely: 
+                delm=delx
+            else:
+                delm=dely
+
+            bex,enx = mex-delm ,mex+delm
+            bey,eny = mey-delm ,mey+delm
+            ax.set_xlim(bex,enx)
+            ax.set_ylim(bey,eny)
+
       
