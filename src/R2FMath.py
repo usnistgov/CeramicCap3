@@ -113,6 +113,10 @@ def get_f(y,rf):
     yy = [C2m,C20,C2p]
     pf = np.polyfit(ff,yy,2)
     minf = -pf[1]/2/pf[0]
+    if minf>rf*N/(N+1) and minf<rf*N/(N-1):
+        return minf
+    else: 
+        return get_f(y,minf)
     return minf
 
 
