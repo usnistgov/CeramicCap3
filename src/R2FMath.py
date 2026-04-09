@@ -2,6 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import scipy.optimize
+from dataclasses import dataclass
 
 """
 $\hat{\chi}^2 = a +bx +cx^2$
@@ -31,39 +32,11 @@ def fit_sine(y,rf):
     O = np.ones(len(y))
     C = np.cos(wt)
     S = np.sin(wt)
-    X = np.matrix(np.vstack((O,C,S)).T)
-    fit_pars=((X.T*X).I)*X.T*np.matrix(y).T
-    fit_vals =np.array( X*fit_pars)[:,0]  
+    X = np.vstack((O,C,S)).T
+    fit_pars = np.linalg.solve(X.T @ X, X.T @ y)
+    fit_vals = X @ fit_pars
     C2 = np.dot(y-fit_vals,y-fit_vals)
-    return fit_pars[1,0],fit_pars[2,0],fit_vals,C2
-
-def fit_sine_cplx(y,rf):
-    """
-    rf = relative frequency = f0/fs.
-    sin(w t)= sin (2*pi*f0 *i/fs)= sin(2*pi*i *f0/fs)
-    A sin(wt + phi) = A*sin(wt)*cos(phi)+A*cos(wt)*sin(phi)=S*sin(wt)+C*cos(w) => C/S=A*sin(phi)/A*cos(phi)=tan(phi) => phi=atan(C/S) 
-
-    If we write 
-    y  = Re( A*Exp(i (wt +phi)) = Re( (A* cos( w+ phi) + A*i*sin(w + phi))
-    Re(A)* cos(wt + phi) - Im(A)* sin(w*t+phi)
-    Re => cos_coeff
-    Im => -sin_coeff
-                   
-    """
-    i = np.arange(len(y))
-    wt= 2*np.pi*i*rf
-    O = np.ones(len(y))
-    C = np.cos(wt)
-    S = np.sin(wt)
-    X = np.matrix(np.vstack((O,C,S)).T)
-    fit_pars=((X.T*X).I)*X.T*np.matrix(y).T
-    fit_vals =np.array( X*fit_pars)[:,0]  
-    C2 = np.dot(y-fit_vals,y-fit_vals)
-    NDF = len(y)-3
-    errv = np.sqrt(C2/NDF)
-    return fit_pars[1,0]-1j*fit_pars[2,0],fit_vals,errv
-
-
+    return fit_pars[1],fit_pars[2],fit_vals,C2
 
 def fit_sine_cplx(y,rf,useHann=True):
     """
@@ -83,23 +56,23 @@ def fit_sine_cplx(y,rf,useHann=True):
     O = np.ones(len(y))
     C = np.cos(wt)
     S = np.sin(wt)
-    X = np.matrix(np.vstack((O,C,S)).T)
+    X = np.vstack((O,C,S)).T
     if useHann:
         #W_vec = np.blackman(len(y))
         W_vec = np.hanning(len(y))
         yw = y * W_vec
         Ow = O * W_vec
         Cw = C * W_vec
-        Sw = S * W_vec        
-        Xw = np.matrix(np.vstack((Ow,Cw,Sw)).T)
-        fit_pars=((Xw.T*Xw).I)*Xw.T*np.matrix(yw).T
+        Sw = S * W_vec
+        Xw = np.vstack((Ow,Cw,Sw)).T
+        fit_pars = np.linalg.solve(Xw.T @ Xw, Xw.T @ yw)
     else:
-        fit_pars=((X.T*X).I)*X.T*np.matrix(y).T
-    fit_vals =np.array( X*fit_pars)[:,0]  
+        fit_pars = np.linalg.solve(X.T @ X, X.T @ y)
+    fit_vals = X @ fit_pars
     C2 = np.dot(y-fit_vals,y-fit_vals)
     NDF = len(y)-3
     errv = np.sqrt(C2/NDF)
-    return fit_pars[1,0]-1j*fit_pars[2,0],fit_vals,errv
+    return fit_pars[1]-1j*fit_pars[2],fit_vals,errv
 
 def get_f(y,rf):
     """
@@ -115,9 +88,8 @@ def get_f(y,rf):
     minf = -pf[1]/2/pf[0]
     if minf>rf*N/(N+1) and minf<rf*N/(N-1):
         return minf
-    else: 
+    else:
         return get_f(y,minf)
-    return minf
 
 
 def calcI2(f, C42,R=50,V2=-9.9):
@@ -170,23 +142,22 @@ def mycomplexfit(x,y):
     X[1::2,3] =  np.real(x)
     Y[::2,0]  =  np.real(y)
     Y[1::2,0] =  np.imag(y)
-    X = np.matrix(X)
-    Y = np.matrix(Y)
-    C = (X.T*X).I
-    fit_pars=C*X.T*Y
-    fit_vals =X*fit_pars
-    C2 = ((Y-fit_vals).T*(Y-fit_vals))[0,0]
+    C = np.linalg.inv(X.T @ X)
+    fit_pars = C @ X.T @ Y
+    fit_vals = X @ fit_pars
+    diff = Y - fit_vals
+    C2 = (diff.T @ diff)[0, 0]
     NDF = L*2-4
     vi = C2/NDF
-    fit_errs = np.sqrt(np.diag(X*C*X.T)*vi)
-    Cov = C*vi
+    fit_errs = np.sqrt(np.diag(X @ C @ X.T) * vi)
+    Cov = C * vi
     # returns fp, fv,fe,C2,Cov
-    return  np.array(fit_pars)[:,0],np.array(fit_vals)[::2,0]+ 1j*np.array(fit_vals)[1::2,0],fit_errs[::2]+1j*fit_errs[1::2] ,C2,Cov
+    return fit_pars[:,0], fit_vals[::2,0] + 1j*fit_vals[1::2,0], fit_errs[::2]+1j*fit_errs[1::2], C2, Cov
 
 
 class anaFile():
-    def __init__(self,bd,fn,startix,ratio=10,data=[]):
-        if len(data)==0:
+    def __init__(self,bd,fn,startix,ratio=10,data=None):
+        if data is None or len(data)==0:
             self.bd = bd
             self.fn = fn
             data = np.loadtxt(os.path.join(self.bd,self.fn),skiprows=1+startix)
@@ -353,7 +324,7 @@ class FACapBridge():
             self.resdict[f]['db']  =  self.resdict[f]['b4'] - self.resdict[f]['b3']
             self.resdict[f]['dae'] = np.sqrt(self.resdict[f]['a3e']**2+ self.resdict[f]['a4e']**2)
             self.resdict[f]['dbe'] = np.sqrt(self.resdict[f]['b3e']**2+ self.resdict[f]['b4e']**2)
-        f0 =1000
+        f0 = self.f0
         if f0 in list(self.resdict):
             for f in list(self.resdict):
                 for k in  list(self.resdict[f]):
@@ -445,9 +416,6 @@ class FourPlusCplxPts():
         col = t-np.real(cplxangle)
         return {'x':outx,'y':outy,'c':col}
 
-
-        return outx,outy
-
     def plot_mycircle(self):
         return self.plot_circle([self.cplxcenter,self.cplxradius,self.cplxangle])
 
@@ -530,7 +498,7 @@ class FourPlusCplxPts():
         denominator = np.sqrt((minor * np.cos(phi_rel))**2 + (major * np.sin(phi_rel))**2)
         rellipse = numerator / denominator
         residuals = rpts - rellipse
-        c2 = sum(residuals**2)       
+        c2 = np.sum(residuals**2)
         phi0 = np.arctan2(y[0]-cy,x[0]-cx)
  
         return    cx+1j*cy, major+1j*minor, phi0+1j*theta,c2
@@ -636,7 +604,7 @@ class Aset():
 
     def plotraw(self,fig=None,ax=[],co='ro'):
         mul=['x1e6','x1e5','x1e4','x1e3','x1e2']
-        if fig==None:
+        if fig is None:
             fig,((ax1,ax2),(ax3,ax4),(ax5,ax6),(ax7,ax8),(ax9,axA)) = plt.subplots(5,2,figsize=(8,10))
             fig.subplots_adjust(wspace=0.4,hspace=0)
             ax = [ax1,ax2,ax3,ax4,ax5,ax6,ax7,ax8,ax9,axA]
@@ -656,7 +624,6 @@ class Aset():
 
         for n,a in enumerate(ax):
             a.set_xscale('log')
-            a.set_xscale('log')
             a.set_xlim(80,1.1e5)
             if n<8:
                 a.xaxis.set_ticklabels([])
@@ -673,7 +640,7 @@ class Aset():
     def plotdiff(self,fig=None,ax=[],co='ro'):
         pref =1e6/np.array([1,10,100,1000,1e4])
         mul=['x1e6','x1e5','x1e4','x1e3','x1e2']
-        if fig==None:
+        if fig is None:
             fig,((ax1,ax2),(ax3,ax4),(ax5,ax6),(ax7,ax8)) = plt.subplots(4,2,figsize=(8,10))
             fig.subplots_adjust(wspace=0.4,hspace=0)
             ax = [ax1,ax2,ax3,ax4,ax5,ax6,ax7,ax8]
@@ -690,7 +657,6 @@ class Aset():
 
         for n,a in enumerate(ax):
             a.set_xscale('log')
-            a.set_xscale('log')
             a.set_xlim(80,1.1e5)
             if n<6:
                 a.xaxis.set_ticklabels([])
@@ -702,9 +668,6 @@ class Aset():
             else:
                 a.set_ylabel('D(f) '+mul[n//2])
         return fig,ax
-
-import numpy as np
-from dataclasses import dataclass
 
 @dataclass
 class ComplexEllipse:
