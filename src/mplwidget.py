@@ -27,11 +27,9 @@ class MplCanvas(FigureCanvasQTAgg):
         elif inset:
             self.bx1 = self.fig.add_axes((0.35,0.6,0.15,0.15))
         #self.fig.subplots_adjust(left=0.25,bottom=0.2,right=0.8)
-        FigureCanvasQTAgg.__init__(self, self.fig)
-        FigureCanvasQTAgg.setSizePolicy(self,
-                                    QSizePolicy.Expanding,
-                                    QSizePolicy.Expanding)
-        FigureCanvasQTAgg.updateGeometry(self)
+        super().__init__(self.fig)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.updateGeometry()
         self.yfmt = "%.5f"
         self.xfmt = "%.0f"
 
@@ -42,7 +40,7 @@ class MplCanvas(FigureCanvasQTAgg):
     def draw(self):   
         self.ax1.xaxis.set_major_formatter(ticker.FormatStrFormatter(self.xfmt))
         self.ax1.yaxis.set_major_formatter(ticker.FormatStrFormatter(self.yfmt))
-        super(FigureCanvasQTAgg, self).draw()
+        super().draw()
 
 
 class MplWidget(QWidget):
@@ -80,16 +78,14 @@ class MplCanvas2(FigureCanvasQTAgg):
         #self.ax1.ticklabel_format(useOffset=False)
         #self.ax2.ticklabel_format(useOffset=False)
 
-        FigureCanvasQTAgg.__init__(self, self.fig)
-        FigureCanvasQTAgg.setSizePolicy(self,
-                                    QSizePolicy.Expanding,
-                                    QSizePolicy.Expanding)
-        FigureCanvasQTAgg.updateGeometry(self)
-        
-    def draw(self):   
+        super().__init__(self.fig)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.updateGeometry()
+
+    def draw(self):
         self.ax1.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.5f"))
         self.ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.5f"))
-        super(FigureCanvasQTAgg, self).draw()
+        super().draw()
 
 
 
@@ -140,11 +136,9 @@ class MplCanvas4(FigureCanvasQTAgg):
         self.ax4 = self.fig.add_axes((ll+w+dy,bb+0*h,w,h))
         
         
-        FigureCanvasQTAgg.__init__(self, self.fig)
-        FigureCanvasQTAgg.setSizePolicy(self,
-                                    QSizePolicy.Expanding,
-                                    QSizePolicy.Expanding)
-        FigureCanvasQTAgg.updateGeometry(self)
+        super().__init__(self.fig)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.updateGeometry()
 
 class MplWidget4(QWidget):
     def __init__(self, parent = None):

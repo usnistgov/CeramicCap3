@@ -16,7 +16,7 @@ class TZA:
 
 
     def open_port(self):
-        if self.is_port_open == False:
+        if not self.is_port_open:
             self.ser = serial.Serial(self.comport, baudrate=115200, bytesize=8, parity='N', stopbits=1, timeout=1000, xonxoff=0, rtscts=0)
             resp=self.get_resp(b'$U') #start command
             self.is_port_open=True
@@ -43,7 +43,6 @@ class TZA:
             self.open_port()
             self.get_resp(f"V{gain}".encode('utf-8'))
             self.get_settings()
-            self.close_port()
 
     def set_hgain(self,hgain):
         for k,v in self.gaindict.items():
@@ -66,7 +65,6 @@ class TZA:
             self.open_port()
             self.get_resp(f"B{bw}".encode('utf-8'))
             self.get_settings()
-            self.close_port()
 
 
     def init_device(self):
@@ -74,7 +72,6 @@ class TZA:
         resp=self.get_resp(b'$N') #set to non inverter
         resp=self.get_resp(b'B1') #ser bandwith 1,2,3,4 1=10 kHz, 2- 1 kHz, 3 = 100 Hz, 4 = 10Hz
         self.get_settings()
-        self.close_port()
 
     def get_resp(self,cmd):
         self.ser.write(cmd)    

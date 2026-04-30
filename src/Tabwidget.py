@@ -1,5 +1,4 @@
 
-from PyQt5.QtGui import QFont,QIcon
 from PyQt5.QtWidgets import (
     QVBoxLayout,
     QGridLayout,
@@ -7,12 +6,12 @@ from PyQt5.QtWidgets import (
     QTabWidget,
 )
 
-class MyTabWidget(QWidget): 
-    def __init__(self, parent): 
-        super(QWidget, self).__init__(parent)  
-        self.layout = QVBoxLayout(self) 
-        # Initialize tab screen 
-        self.master     = QTabWidget() 
+class MyTabWidget(QWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._layout = QVBoxLayout(self)
+        # Initialize tab screen
+        self.master     = QTabWidget()
 
         self.master.resize(300, 200) 
         self.tablabels=['scatter','raw','alpha(t)','circles','alpha(f)','msg','last status']
@@ -23,8 +22,8 @@ class MyTabWidget(QWidget):
             self.master.addTab(self.mytabs[n],\
                     self.tablabels[n]) 
 
-        self.layout.addWidget(self.master) 
-        self.setLayout(self.layout) 
+        self._layout.addWidget(self.master)
+        self.setLayout(self._layout)
         
         glayout =  QGridLayout()
         self.mytabs[0].setLayout(glayout) 
