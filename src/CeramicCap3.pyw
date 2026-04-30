@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
                 self.saveData(self.fsig)
                 self.fp()
         self.replot()
-
+ 
     def calcVsmall(self,f,V1=-9.0,R=50):
         C42 =self.C42
         C41 =self.C41
@@ -371,7 +371,7 @@ class MainWindow(QMainWindow):
                 while np.abs(self.V2)>9:
                     self.V1 = self.V1*0.9
                     self.V2 = self.calcVsmall(self.fsig,V1=self.V1)
-                self.dV = np.abs(self.V2)/100
+                self.dV = np.abs(self.V2)/200
                 #self.myprint('New f={0:8.0f} kHz V1={1:4.3f} + {2:4.3f}i  dV={3:4.3f}'.format(self.fsig/1000,np.real(self.V1),np.imag(self.V1),self.dV))
                 self.mydvm.storeV(self.V1,self.V2,self.dV,self.fsig,self.g1,self.g2)        
             self.laUpdate()

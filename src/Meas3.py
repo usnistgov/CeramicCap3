@@ -10,6 +10,8 @@ import numpy as np
 import pyvisa
 import R2FMath
 import CustomData
+import datetime
+import os
 
 class Meas(QObject):
     finished = pyqtSignal()
@@ -17,6 +19,7 @@ class Meas(QObject):
     dataSetReady  = pyqtSignal(CustomData.FourChannels)
 
     def __init__(self,mutex,parent,NDpts):
+        self.bdraw = r'c:\RAWDATA'
         super(QObject, self).__init__()
         self.NDpts = NDpts  #4 for a circle double points means in both switch positions
         self.Npts = 2*NDpts #8 for a circle double points means in both switch positions
@@ -160,5 +163,12 @@ class Meas(QObject):
             ch1=self.dvm.query_binary_values('FETCH3? (@102)',  datatype='f', is_big_endian=True)
         ch3=self.dvm.query_binary_values('FETCH3? (@103)',  datatype='f', is_big_endian=True)
         ch4=self.dvm.query_binary_values('FETCH3? (@104)',  datatype='f', is_big_endian=True)
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        self.bd = os.path.join(self.bdraw,now.strftime("%Y"),now.strftime("%m"),now.strftime("%d"))
+        os.makedirs(self.bd, exist_ok=True)        
+        fn = os.path.join(self.bd,f"ceramic_raw_{timestamp}.npz")
+        np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3, ch4=ch4)       
         self.rawN.setPoint(self.co,ch1,ch2,ch3,ch4,self.V1rb,self.V2rb,time.time())
         self.dataSetReady.emit(self.rawN.Data[self.co])
+
