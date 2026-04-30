@@ -2,6 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import scipy.optimize
+from dataclasses import dataclass
 
 """
 $\hat{\chi}^2 = a +bx +cx^2$
@@ -85,7 +86,10 @@ def get_f(y,rf):
     yy = [C2m,C20,C2p]
     pf = np.polyfit(ff,yy,2)
     minf = -pf[1]/2/pf[0]
-    return minf
+    if minf>rf*N/(N+1) and minf<rf*N/(N-1):
+        return minf
+    else:
+        return get_f(y,minf)
 
 
 def calcI2(f, C42,R=50,V2=-9.9):
@@ -139,20 +143,21 @@ def mycomplexfit(x,y):
     Y[::2,0]  =  np.real(y)
     Y[1::2,0] =  np.imag(y)
     C = np.linalg.inv(X.T @ X)
-    fit_pars = C @ X.T @ Y        # (4,1)
-    fit_vals = X @ fit_pars       # (L*2,1)
-    C2 = ((Y-fit_vals).T @ (Y-fit_vals))[0,0]
+    fit_pars = C @ X.T @ Y
+    fit_vals = X @ fit_pars
+    diff = Y - fit_vals
+    C2 = (diff.T @ diff)[0, 0]
     NDF = L*2-4
     vi = C2/NDF
-    fit_errs = np.sqrt(np.diag(X @ C @ X.T)*vi)
-    Cov = C*vi
+    fit_errs = np.sqrt(np.diag(X @ C @ X.T) * vi)
+    Cov = C * vi
     # returns fp, fv,fe,C2,Cov
-    return fit_pars[:,0], fit_vals[::2,0]+1j*fit_vals[1::2,0], fit_errs[::2]+1j*fit_errs[1::2], C2, Cov
+    return fit_pars[:,0], fit_vals[::2,0] + 1j*fit_vals[1::2,0], fit_errs[::2]+1j*fit_errs[1::2], C2, Cov
 
 
 class anaFile():
-    def __init__(self,bd,fn,startix,ratio=10,data=[]):
-        if len(data)==0:
+    def __init__(self,bd,fn,startix,ratio=10,data=None):
+        if data is None or len(data)==0:
             self.bd = bd
             self.fn = fn
             data = np.loadtxt(os.path.join(self.bd,self.fn),skiprows=1+startix)
@@ -319,7 +324,7 @@ class FACapBridge():
             self.resdict[f]['db']  =  self.resdict[f]['b4'] - self.resdict[f]['b3']
             self.resdict[f]['dae'] = np.sqrt(self.resdict[f]['a3e']**2+ self.resdict[f]['a4e']**2)
             self.resdict[f]['dbe'] = np.sqrt(self.resdict[f]['b3e']**2+ self.resdict[f]['b4e']**2)
-        f0 =1000
+        f0 = self.f0
         if f0 in list(self.resdict):
             for f in list(self.resdict):
                 for k in  list(self.resdict[f]):
@@ -493,7 +498,7 @@ class FourPlusCplxPts():
         denominator = np.sqrt((minor * np.cos(phi_rel))**2 + (major * np.sin(phi_rel))**2)
         rellipse = numerator / denominator
         residuals = rpts - rellipse
-        c2 = sum(residuals**2)       
+        c2 = np.sum(residuals**2)
         phi0 = np.arctan2(y[0]-cy,x[0]-cx)
  
         return    cx+1j*cy, major+1j*minor, phi0+1j*theta,c2
@@ -599,7 +604,7 @@ class Aset():
 
     def plotraw(self,fig=None,ax=[],co='ro'):
         mul=['x1e6','x1e5','x1e4','x1e3','x1e2']
-        if fig==None:
+        if fig is None:
             fig,((ax1,ax2),(ax3,ax4),(ax5,ax6),(ax7,ax8),(ax9,axA)) = plt.subplots(5,2,figsize=(8,10))
             fig.subplots_adjust(wspace=0.4,hspace=0)
             ax = [ax1,ax2,ax3,ax4,ax5,ax6,ax7,ax8,ax9,axA]
@@ -619,7 +624,6 @@ class Aset():
 
         for n,a in enumerate(ax):
             a.set_xscale('log')
-            a.set_xscale('log')
             a.set_xlim(80,1.1e5)
             if n<8:
                 a.xaxis.set_ticklabels([])
@@ -636,7 +640,7 @@ class Aset():
     def plotdiff(self,fig=None,ax=[],co='ro'):
         pref =1e6/np.array([1,10,100,1000,1e4])
         mul=['x1e6','x1e5','x1e4','x1e3','x1e2']
-        if fig==None:
+        if fig is None:
             fig,((ax1,ax2),(ax3,ax4),(ax5,ax6),(ax7,ax8)) = plt.subplots(4,2,figsize=(8,10))
             fig.subplots_adjust(wspace=0.4,hspace=0)
             ax = [ax1,ax2,ax3,ax4,ax5,ax6,ax7,ax8]
@@ -653,7 +657,6 @@ class Aset():
 
         for n,a in enumerate(ax):
             a.set_xscale('log')
-            a.set_xscale('log')
             a.set_xlim(80,1.1e5)
             if n<6:
                 a.xaxis.set_ticklabels([])
@@ -665,9 +668,6 @@ class Aset():
             else:
                 a.set_ylabel('D(f) '+mul[n//2])
         return fig,ax
-
-import numpy as np
-from dataclasses import dataclass
 
 @dataclass
 class ComplexEllipse:
@@ -711,11 +711,21 @@ class ComplexEllipse:
         Fits an ellipse to (x,y) data using the Fitzgibbon Direct Least Squares method
         and returns a pure ComplexEllipse instance.
         """
+        
+        
         x = np.array(x)
         y = np.array(y)
+
+        mx, my = np.mean(x), np.mean(y)
+        scale = np.max([np.std(x), np.std(y)]) 
+        if scale == 0: 
+            return None
         
+        xn = (x - mx) / scale
+        yn = (y - my) / scale
+
         # 1. Construct matrices
-        D = np.vstack([x**2, x*y, y**2, x, y, np.ones_like(x)]).T       
+        D = np.vstack([xn**2, xn*yn, yn**2, xn, yn, np.ones_like(xn)]).T       
         S = np.dot(D.T, D)
         
         C = np.zeros((6, 6))
@@ -776,12 +786,12 @@ class ComplexEllipse:
         else:
             c2=res1
 
-        phi0 = np.arctan2(y[0]-cy,x[0]-cx)
+        phi0 = np.arctan2(yn[0]-cy,xn[0]-cx)
         #print(phi0,theta)
         
 
         # 5. Calculate Counter-Rotating Complex Amplitudes
-        eta_o = cx + 1j * cy
+        eta_o = cx*scale+mx + 1j *(( cy*scale) +my)
         #phase_factor = np.exp(1j * theta)
 
         a = np.exp(1j*phi0)
@@ -793,8 +803,8 @@ class ComplexEllipse:
 
         #phase_factor = np.exp(1j * phi0)
         phase_factor = np.exp(1j * theta)
-        eta_ccw = 0.5 * (major + minor) * phase_factor
-        eta_cw = 0.5 * (major - minor) * phase_factor
+        eta_ccw = 0.5 * (major + minor) * phase_factor *scale
+        eta_cw = 0.5 * (major - minor) * phase_factor *scale
 
         return cls(eta_o=eta_o, eta_ccw=eta_ccw, eta_cw=eta_cw)
     
@@ -819,11 +829,26 @@ class ComplexEllipse:
         
         return x, y
     
-    def plot_elli(self,ax,ellipse_color='k',maj_color='r',min_color='b'):
+    def plot_elli(self,ax,ellipse_color='k',maj_color='r',min_color='b',rescale=True):
         data = self.evaluate()
         ax.plot(np.real(data),np.imag(data),linestyle='-',color=ellipse_color)
         l1 = np.array([self.eta_o,self.eta_o+self.semi_major])
         l2 = np.array([self.eta_o,self.eta_o+self.semi_minor])
         ax.plot(np.real(l1),np.imag(l1),linestyle='-.',color= maj_color)
         ax.plot(np.real(l2),np.imag(l2),linestyle=':',color=min_color)
+        if rescale:
+            bex,enx = ax.get_xlim()
+            bey,eny = ax.get_ylim()
+            delx,mex = 0.5*(enx-bex), 0.5*(enx+bex)
+            dely,mey = 0.5*(eny-bey), 0.5*(eny+bey)
+            if delx>dely: 
+                delm=delx
+            else:
+                delm=dely
+
+            bex,enx = mex-delm ,mex+delm
+            bey,eny = mey-delm ,mey+delm
+            ax.set_xlim(bex,enx)
+            ax.set_ylim(bey,eny)
+
       
