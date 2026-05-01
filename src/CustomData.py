@@ -1,6 +1,95 @@
 import R2FMath
 import numpy as np
 import copy
+import scipy.optimize
+
+
+
+def fit_sine_cplx(y, fsamp,fsig,fline=60, Nhars=1,use_hann=True):
+    """
+    Fits a sine wave with a DC offset to the data: 
+    y = DC + cos_coeff*cos(wt) + sin_coeff*sin(wt)
+    
+    Parameters:
+        y (array-like): The signal data.
+        rf (float): Relative frequency (f0/fs).
+        use_hann (bool): Whether to apply a Hanning window.
+        
+    Returns:
+        tuple: (complex_amplitude, fitted_values, error_variance, residual_sum_of_squares)
+    """
+    y = np.asarray(y)
+    n = len(y)
+    
+    rf = fsig/fsamp
+    rlf = fline/fsamp
+    # Pre-calculate angular frequency vector
+    wt  =  2 * np.pi * np.arange(n) * rf
+    wlf =  2 * np.pi * np.arange(n) * rlf
+
+    
+    # Build design matrix X directly using column_stack
+    X = np.column_stack((np.ones(n), np.cos(wt), np.sin(wt),np.cos(wlf), np.sin(wlf)))
+    cuhars=1
+    while cuhars<Nhars:
+        cuhars+=1
+        X = np.column_stack((X, np.cos(cuhars*wt), np.sin(cuhars*wt)))
+
+    if use_hann:
+        # Generate window and apply weights
+        w = np.hanning(n)
+        # Broadcasting the window across X columns is faster and cleaner
+        X_w = X * w[:, np.newaxis] 
+        y_w = y * w
+        
+        # lstsq is numerically far more stable than solving normal equations (X^T * X)
+        fit_pars, _, _, _ = np.linalg.lstsq(X_w, y_w, rcond=None)
+    else:
+        fit_pars, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+        
+    # Calculate fitted values and residuals
+    fit_vals = X @ fit_pars
+    residuals = y - fit_vals
+    
+    # Residual Sum of Squares (C2)
+    rss = np.sum(residuals**2) 
+    
+    ndf = n - 3
+    errv = np.sqrt(rss / ndf) if ndf > 0 else 0.0
+    
+    # Complex amplitude: cos_coeff - 1j * sin_coeff
+    complex_amp = fit_pars[1] - 1j * fit_pars[2]
+    
+    return complex_amp, fit_vals, errv, rss
+
+
+def get_f(y, fsamp, fsig_guess, fline_guess=60.0):
+    n = len(y)
+    
+    def cost_function(params):
+        fsig, fline = params
+        return fit_sine_cplx(y, fsamp, fsig, fline)[3]
+        
+    initial_guess = [fsig_guess, fline_guess]
+    
+    # Define the tight search window using your n/(n±1) logic
+    fsig_min = fsig_guess * n / (n + 1)
+    fsig_max = fsig_guess * n / (n - 1)
+    
+    bounds = (
+        (fsig_min, fsig_max),  # Strict cage for the main signal
+        (59.5, 60.5)           # Strict cage for the line noise
+    )
+    
+    result = scipy.optimize.minimize(cost_function, initial_guess, method='L-BFGS-B', bounds=bounds)
+    
+    if result.success:
+        return result.x[0], result.x[1]
+    else:
+        print(f"Optimization failed: {result.message}")
+        return fsig_guess, fline_guess
+    
+
 
 class MyData:
     def __init__(self, ave4,ts):
@@ -16,18 +105,19 @@ class SampleData:
         self.data  = np.array(data)
         self.fsig  = fsig
         self.fsamp = fsamp
+        self.fline = 60
         self.f0 = self.fsig/self.fsamp
         self.Nhars = Nhars
 
-    def setfmin(self,fmin):
-        self.fmin = fmin
+    def setf(self,fsig,fline):
+        self.fsig,self.fline =  fsig,fline
 
     def findf(self):
-        self.fmin = R2FMath.get_f(self.data,self.f0)
-        return self.fmin
+        self.fsig,self.fline = get_f(self.data, self.fsamp, self.fsig, self.fline)
+        return self.fsig,self.fline
         
-    def fit(self):
-        self.Vc, self.fv,self.c2 = R2FMath.fit_sine_cplx(self.data,self.fmin,self.Nhars)
+    def fit(self):  #(y, fsamp,fsig,fline=60, use_hann=True):
+        self.Vc, self.fv,errv,self.c2 = fit_sine_cplx(self.data,self.fsamp,self.fsig,self.fline,self.Nhars,True)
 
 
 class FourChannels:
@@ -45,9 +135,9 @@ class FourChannels:
         self.Data.append(SampleData(fsig,fsamp,ch2,Nhars))
         self.Data.append(SampleData(fsig,fsamp,ch3,Nhars))
         self.Data.append(SampleData(fsig,fsamp,ch4,Nhars))
-        fmin = self.Data[0].findf()
+        fsig, fline =  self.Data[0].findf()
         for i in range(4):
-            self.Data[i].setfmin(fmin)
+            self.Data[i].setf(fsig, fline)
             self.Data[i].fit()
 
 class NPoints:
