@@ -1,94 +1,101 @@
 import R2FMath
 import numpy as np
-import copy
 import scipy.optimize
 
 
 
-def fit_sine_cplx(y, fsamp,fsig,fline=60, Nhars=1,use_hann=True):
+def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True):
     """
-    Fits a sine wave with a DC offset to the data: 
-    y = DC + cos_coeff*cos(wt) + sin_coeff*sin(wt)
-    
+    Fits a sine wave with a DC offset to the data:
+    y = DC + cos_coeff*cos(wt) + sin_coeff*sin(wt) + [line harmonics] + [signal harmonics]
+
     Parameters:
         y (array-like): The signal data.
-        rf (float): Relative frequency (f0/fs).
-        use_hann (bool): Whether to apply a Hanning window.
-        
-    Returns:
-        tuple: (complex_amplitude, fitted_values, error_variance, residual_sum_of_squares)
-    """
-    y = np.asarray(y)
-    n = len(y)
-    
-    rf = fsig/fsamp
-    rlf = fline/fsamp
-    # Pre-calculate angular frequency vector
-    wt  =  2 * np.pi * np.arange(n) * rf
-    wlf =  2 * np.pi * np.arange(n) * rlf
+        fsamp (float): Sampling frequency.
+        fsig (float): Signal frequency.
+        fline (float): Line noise frequency.
+        Nhars (int): Number of signal harmonics to fit (1 = fundamental only).
+        use_hann (bool): Whether to apply a Hanning window consistently throughout.
 
-    
-    # Build design matrix X directly using column_stack
-    X = np.column_stack((np.ones(n), np.cos(wt), np.sin(wt),np.cos(wlf), np.sin(wlf)))
-    cuhars=1
-    while cuhars<Nhars:
-        cuhars+=1
-        X = np.column_stack((X, np.cos(cuhars*wt), np.sin(cuhars*wt)))
+    Returns:
+        tuple: (complex_amplitude, fit_vals, errv, rss)
+            complex_amplitude: cos_coeff - 1j * sin_coeff for the fundamental
+            fit_vals: fitted values in the (possibly windowed) domain
+            errv: RMS residual (sqrt of RSS / ndf)
+            rss: residual sum of squares, in whichever domain was fitted
+    """
+    y = np.asarray(y, dtype=float)
+    n = len(y)
+
+    rf  = fsig  / fsamp
+    rlf = fline / fsamp
+
+    wt  = 2 * np.pi * np.arange(n) * rf
+    wlf = 2 * np.pi * np.arange(n) * rlf
+
+    cols = [np.ones(n), np.cos(wt), np.sin(wt), np.cos(wlf), np.sin(wlf)]
+    for h in range(2, Nhars + 1):
+        cols.extend([np.cos(h * wt), np.sin(h * wt)])
+    X = np.column_stack(cols)
+
+    n_params = 1 + 2 * Nhars + 2  # DC + signal harmonics + line fundamental
+    ndf = n - n_params
 
     if use_hann:
-        # Generate window and apply weights
         w = np.hanning(n)
-        # Broadcasting the window across X columns is faster and cleaner
-        X_w = X * w[:, np.newaxis] 
-        y_w = y * w
-        
-        # lstsq is numerically far more stable than solving normal equations (X^T * X)
-        fit_pars, _, _, _ = np.linalg.lstsq(X_w, y_w, rcond=None)
+        X_eff = X * w[:, np.newaxis]
+        y_eff = y * w
     else:
-        fit_pars, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-        
-    # Calculate fitted values and residuals
+        X_eff = X
+        y_eff = y
+
+    fit_pars, lstsq_res, _, _ = np.linalg.lstsq(X_eff, y_eff, rcond=None)
+
     fit_vals = X @ fit_pars
-    residuals = y - fit_vals
-    
-    # Residual Sum of Squares (C2)
-    rss = np.sum(residuals**2) 
-    
-    ndf = n - 3
-    errv = np.sqrt(rss / ndf) if ndf > 0 else 0.0
-    
-    # Complex amplitude: cos_coeff - 1j * sin_coeff
+    rss = float(lstsq_res[0]) if len(lstsq_res) == 1 else float(np.sum((y_eff - X_eff @ fit_pars) ** 2))
+    errv     = np.sqrt(rss / ndf) if ndf > 0 else 0.0
+
     complex_amp = fit_pars[1] - 1j * fit_pars[2]
-    
+
     return complex_amp, fit_vals, errv, rss
 
 
-def get_f(y, fsamp, fsig_guess, fline_guess=60.0):
+def get_f(y, fsamp, fsig_guess, fline_guess=60.0, use_hann=True, Nhars=1):
+    """
+    Estimates the signal frequency by minimizing the residual sum of squares
+    from fit_sine_cplx using Brent's bounded method (guaranteed convergence).
+
+    Parameters:
+        y (array-like): The signal data.
+        fsamp (float): Sampling frequency.
+        fsig_guess (float): Initial guess for the signal frequency.
+        fline_guess (float): Line noise frequency (fixed during search).
+        use_hann (bool): Passed through to fit_sine_cplx.
+        Nhars (int): Number of signal harmonics — must match the final fit.
+
+    Returns:
+        tuple: (fsig, fline) best-fit frequencies.
+    """
+    y = np.asarray(y, dtype=float)
     n = len(y)
-    
-    def cost_function(params):
-        fsig, fline = params
-        return fit_sine_cplx(y, fsamp, fsig, fline)[3]
-        
-    initial_guess = [fsig_guess, fline_guess]
-    
-    # Define the tight search window using your n/(n±1) logic
+
     fsig_min = fsig_guess * n / (n + 1)
     fsig_max = fsig_guess * n / (n - 1)
-    
-    bounds = (
-        (fsig_min, fsig_max),  # Strict cage for the main signal
-        (59.5, 60.5)           # Strict cage for the line noise
+
+    res_sig = scipy.optimize.minimize_scalar(
+        lambda fsig: fit_sine_cplx(y, fsamp, fsig, fline_guess, Nhars=Nhars, use_hann=use_hann)[3],
+        bounds=(fsig_min, fsig_max),
+        method='bounded',
     )
-    
-    result = scipy.optimize.minimize(cost_function, initial_guess, method='L-BFGS-B', bounds=bounds)
-    
-    if result.success:
-        return result.x[0], result.x[1]
-    else:
-        print(f"Optimization failed: {result.message}")
-        return fsig_guess, fline_guess
-    
+    best_fsig = res_sig.x
+
+    res_line = scipy.optimize.minimize_scalar(
+        lambda fline: fit_sine_cplx(y, fsamp, best_fsig, fline, Nhars=Nhars, use_hann=use_hann)[3],
+        bounds=(fline_guess - 0.5, fline_guess + 0.5),
+        method='bounded',
+    )
+    return best_fsig, res_line.x
+        
 
 
 class MyData:
@@ -101,20 +108,19 @@ class MyData:
 
 
 class SampleData:
-    def __init__(self,fsig,fsamp,data,Nhars=2):
+    def __init__(self,fsig,fsamp,data,Nhars=1):
         self.data  = np.array(data)
         self.fsig  = fsig
         self.fsamp = fsamp
         self.fline = 60
-        self.f0 = self.fsig/self.fsamp
         self.Nhars = Nhars
 
     def setf(self,fsig,fline):
         self.fsig,self.fline =  fsig,fline
 
     def findf(self):
-        self.fsig,self.fline = get_f(self.data, self.fsamp, self.fsig, self.fline)
-        return self.fsig,self.fline
+        self.fsig, self.fline = get_f(self.data, self.fsamp, self.fsig, self.fline, Nhars=self.Nhars)
+        return self.fsig, self.fline
         
     def fit(self):  #(y, fsamp,fsig,fline=60, use_hann=True):
         self.Vc, self.fv,errv,self.c2 = fit_sine_cplx(self.data,self.fsamp,self.fsig,self.fline,self.Nhars,True)
@@ -125,12 +131,12 @@ class FourChannels:
         self.ts    = ts
         self.fsig  = fsig
         self.fsamp = fsamp
-        self.i=i
+        self.i     = i
+        self.Data  = []
+        self.V1c   = V1c
+        self.V2c   = V2c
         if ts<0:
             return
-        self.Data =[]
-        self.V1c=V1c
-        self.V2c=V2c
         self.Data.append(SampleData(fsig,fsamp,ch1,Nhars))
         self.Data.append(SampleData(fsig,fsamp,ch2,Nhars))
         self.Data.append(SampleData(fsig,fsamp,ch3,Nhars))
@@ -141,7 +147,7 @@ class FourChannels:
             self.Data[i].fit()
 
 class NPoints:
-    def __init__(self,fsig,fsamp,Nhars=2,g1=1,g2=1,ratio=10,N=8):
+    def __init__(self,fsig,fsamp,Nhars=1,g1=1,g2=1,ratio=10,N=8):
         self.N=N
         self.Res={}
         self.Res['fsig']= fsig
@@ -178,7 +184,6 @@ class NPoints:
     def calc(self):
         self.precalc()
         self.Cir = np.zeros(self.N//2,dtype=object)
-        self.Ccirpar =[]
         la=['V1cplxcenter','V1cplxradius','V1cplxangle','V2cplxcenter','V2cplxradius','V2cplxangle',\
             'V3cplxcenter','V3cplxradius','V3cplxangle','V4cplxcenter','V4cplxradius','V4cplxangle']
         for i in range(4):
@@ -268,7 +273,7 @@ class AllData():
         if L==0:
             for k in keys:
                 retdict[k]=np.array([])
-                return retdict
+            return retdict
         for k in keys:
             retdict[k]=np.empty(L,dtype=object)
         for n,a in enumerate(self.mydict[f]):
@@ -277,8 +282,10 @@ class AllData():
         return retdict
 
     def getallkeys(self,f):
-        k = list(self.mydict)
-        return self.getkeys(f,k)
+        if f not in self.mydict or len(self.mydict[f]) == 0:
+            return {}
+        keys = list(self.mydict[f][0].Res.keys())
+        return self.getkeys(f, keys)
     
     def getdictf(self, keys):
         retdict={}
@@ -359,7 +366,7 @@ class AllData():
             else:
                 sa=0
             if len(db)>2:
-                sb =np.std(da,ddof=1)
+                sb =np.std(db,ddof=1)
             else:
                 sb=0
             ret.append(np.hstack((np.mean(da),np.mean(db),sa,sb)))

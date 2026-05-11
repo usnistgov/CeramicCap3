@@ -27,7 +27,7 @@ class Meas(QObject):
         self.mutex = mutex
         self.isidle = True
         self._stop = False
-        self.Nhars = 2
+        self.Nhars = 1
         self.runt = time.time()
         self.fsig = 1000
         self.fsamp = 800000

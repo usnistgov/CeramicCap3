@@ -14,6 +14,7 @@ from Voltfield import VoltField
 from Meas3 import Meas
 from Tabwidget import MyTabWidget
 import CustomData
+import CircuitSetup
 
 from PyQt5.QtCore import (
     QMutex,
@@ -42,23 +43,24 @@ class MainWindow(QMainWindow):
     stopDVM = pyqtSignal()
 
     def __init__(self, mutex):
+        super().__init__()
+        self.mutex = mutex
+        self.t0 = time.time()
+        self.Npts = 8
+        self.ver = 3.0
+        self.quit = False
+        self.measuring = False
+        self.loopfinished = False
+        self.yyyymmdir = r'C:\DATA\CERAMIC\202509'
+        self.mytext = []
+        self.mytextmaxlen = 1000
         self.tzaport = []
         for p in serial.tools.list_ports.comports():
             if p.description.startswith('TZA/OPM500'):
                 self.tzaport.append(p.device)
         self.tza1 = TZA.TZA(self.tzaport[1])
         self.tza2 = TZA.TZA(self.tzaport[0])
-        self.t0 = time.time()
         self.config = CCConfig.CCC()
-        self.Npts = 8
-        self.ver = 3.0
-        self.quit = False
-        self.loopfinished = False
-        self.yyyymmdir = r'C:\DATA\CERAMIC\202509'
-        self.mytext = []
-        self.mytextmaxlen = 1000
-        super().__init__()
-        self.mutex = mutex
         self.thread = QThread()
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -74,6 +76,7 @@ class MainWindow(QMainWindow):
         self.fsigold = -1
         self.rData = CustomData.NPoints(1000, 800000)
         self.rSet = CustomData.FourChannels(1000, 800000, 2, [], [], [], [], 0, 0, 0, ts=-1)
+        self.livePhasors = [[] for _ in range(4)]
         self.allData = CustomData.AllData()
         self.myprint(f"Welcome to Version {self.ver}")
         self.parseconfig()
@@ -93,10 +96,10 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.abplots[i, j] = mplwidget.MplWidget(rightax=False)
 
-        self.ciplots = np.empty((2, 2), dtype=object)
+        self.psaplots = np.empty((2, 2), dtype=object)
         for i in range(2):
             for j in range(2):
-                self.ciplots[i, j] = mplwidget.MplWidget(rightax=False)
+                self.psaplots[i, j] = mplwidget.MplWidget(rightax=False)
 
         self.alphafplots = np.empty((1, 2), dtype=object)
         for j in range(2):
@@ -119,9 +122,11 @@ class MainWindow(QMainWindow):
 
         vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Fixed))
 
+        self.buStart = QPushButton("Start")
         self.buQuit = QPushButton("Quit")
         self.bufp = QPushButton("f++")
         self.bufm = QPushButton("f--")
+        vlayout.addWidget(self.buStart)
         vlayout.addWidget(self.buQuit)
         vlayout.addWidget(self.bufp)
         vlayout.addWidget(self.bufm)
@@ -137,6 +142,7 @@ class MainWindow(QMainWindow):
         vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Expanding))
 
         glayout.addLayout(vlayout)
+        self.circuit_setup = CircuitSetup.CircuitSetupWidget(self.config.cfgpath)
         self.tabWidget = MyTabWidget(self)
         glayout.addWidget(self.tabWidget)
         vlayout = QVBoxLayout()
@@ -179,10 +185,11 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage('Welcome to CeramicCap', 5000)
         self.statusBar.addPermanentWidget(widget)
 
+        self.buStart.clicked.connect(self.startMeas)
         self.buQuit.clicked.connect(self.finishUp)
         self.bufp.clicked.connect(self.fp)
         self.bufm.clicked.connect(self.fm)
-        self.goagain()
+        self.statusBar.showMessage('Ready — press Start to begin', 0)
 
     def parseconfig(self):
         self.config.read()
@@ -252,14 +259,21 @@ class MainWindow(QMainWindow):
             self.g2 = self.tza2.text_to_gain(button.text())
 
     def finishUp(self):
+        if not self.measuring:
+            self.close()
+            return
         self.statusBar.showMessage('Wait for graceful exit')
-        self.myprint("Wait to finish up measurement for graceful exit")
+        self.myprint("Stopping — waiting for current point to finish")
+        self.measuring = False
         self.quit = True
+        self.stopDVM.emit()
 
     def closeEvent(self, event):
-        if not self.loopfinished:
+        if self.measuring and not self.loopfinished:
             self.statusBar.showMessage('Wait for graceful exit')
             self.myprint("Close event called, but loop not finished")
+            if not self.quit:
+                self.stopDVM.emit()
             self.quit = True
             event.ignore()
         else:
@@ -271,6 +285,7 @@ class MainWindow(QMainWindow):
         self.dV = self.VF_dV.value()
 
     def onNewData(self, MyData: CustomData.NPoints):
+        self.livePhasors = [[] for _ in range(4)]
         self.rData = MyData
         self.V2 = self.rData.Res['Vz4']
         if self.rData.goodData:
@@ -283,7 +298,10 @@ class MainWindow(QMainWindow):
         if self.fsig == self.fsigold:
             if self.allData.countf(self.fsig) == self.nrMeas:
                 self.saveData(self.fsig)
-                self.fp()
+                if self.fsig == self.flist[-1]:
+                    self.measuring = False
+                else:
+                    self.fp()
         self.replot()
 
     def calcVsmall(self, f, V1=-9.0, R=50):
@@ -294,8 +312,24 @@ class MainWindow(QMainWindow):
         V2 = -I1*(R+1/(iw*C41))
         return V2
 
+    def startMeas(self):
+        self.circuit_setup.save_config()
+        self.parseconfig()
+        self.measuring = True
+        self.buStart.setEnabled(False)
+        self.fsig = self.flist[0]
+        self.fsigold = -1
+        self.firstgood = False
+        self.progressBar.setValue(0)
+        self.myprint("Starting frequency sweep")
+        self.statusBar.showMessage('Measuring...', 0)
+        self.goagain()
+
     def goagain(self):
-        if not self.quit:
+        if self.quit:
+            self.loopfinished = True
+            self.close()
+        elif self.measuring:
             self.thread = QThread()
             self.mydvm = Meas(self.mutex, self.Npts)
             self.mydvm.moveToThread(self.thread)
@@ -319,7 +353,7 @@ class MainWindow(QMainWindow):
                 while np.abs(self.V2) > 9:
                     self.V1 = self.V1*0.9
                     self.V2 = self.calcVsmall(self.fsig, V1=self.V1)
-                self.dV = np.abs(self.V2)/200
+                self.dV = np.abs(self.V2)/20
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
             self.laUpdate()
             self.mydvm.logMessage.connect(self.myprint)
@@ -334,13 +368,20 @@ class MainWindow(QMainWindow):
             self.thread.start()
             self.fsigold = self.fsig
         else:
-            self.loopfinished = True
-            self.close()
+            self.myprint("Frequency sweep complete")
+            self.statusBar.showMessage('Sweep complete — press Start to measure again', 0)
+            self.buStart.setEnabled(True)
 
     def onNewSet(self, MySet: CustomData.FourChannels):
         self.rSet = MySet
         self.progressBar.setValue(MySet.i+1)
-        self.replot()
+        if MySet.ts > 0:
+            for j in range(4):
+                self.livePhasors[j].append(MySet.Data[j].Vc)
+        self.plotscatter()
+        currentTab = self.tabWidget.master.tabText(self.tabWidget.master.currentIndex())
+        if currentTab != 'scatter':
+            self.replot()
 
     def myprint(self, newtext):
         n = datetime.datetime.now()
@@ -366,8 +407,8 @@ class MainWindow(QMainWindow):
             self.plotraw()
         elif tat == 'alpha(t)':
             self.plotalpha()
-        elif tat == 'circles':
-            self.plotcircles()
+        elif tat == 'PSA':
+            self.plotpsa()
         elif tat == 'alpha(f)':
             self.plotalphaf()
         elif tat == 'last status':
@@ -425,22 +466,29 @@ class MainWindow(QMainWindow):
                 file.write(o)
 
     def plotscatter(self):
-        if self.rData.Res['ts'] <= 0:
-            return
         for j in range(2):
             for i in range(2):
                 self.scatterplots[i, j].canvas.ax1.cla()
-        self.scatterplots[0, 0].canvas.ax1.plot(np.real(self.rData.ave4[:, 0]),
-                                                 np.imag(self.rData.ave4[:, 0]), 'ro')
-        self.scatterplots[0, 1].canvas.ax1.plot(np.real(self.rData.ave4[:, 1]),
-                                                 np.imag(self.rData.ave4[:, 1]), 'go')
-        self.scatterplots[1, 0].canvas.ax1.plot(np.real(self.rData.ave4[:, 2]),
-                                                 np.imag(self.rData.ave4[:, 2]), 'bo')
-        self.scatterplots[1, 1].canvas.ax1.plot(np.real(self.rData.ave4[:, 3]),
-                                                 np.imag(self.rData.ave4[:, 3]), 'mo')
-        self.scatterplots[0, 1].canvas.ax1.scatter(**self.rData.Cir[1].plot_mycircle(), marker='.', s=1, cmap='Greens')
-        self.scatterplots[1, 0].canvas.ax1.scatter(**self.rData.Cir[2].plot_mycircle(), marker='.', s=1, cmap='Blues')
-        self.scatterplots[1, 1].canvas.ax1.scatter(**self.rData.Cir[3].plot_mycircle(), marker='.', s=1, cmap='Purples')
+        if self.livePhasors[0]:
+            V0 = np.array(self.livePhasors[0])
+            phases = np.exp(-1j * np.angle(V0))
+            V = [np.array(self.livePhasors[j]) * phases for j in range(4)]
+            self.scatterplots[0, 0].canvas.ax1.plot(np.real(V[0]), np.imag(V[0]), 'r+')
+            self.scatterplots[0, 1].canvas.ax1.plot(np.real(V[1]), np.imag(V[1]), 'g+')
+            self.scatterplots[1, 0].canvas.ax1.plot(np.real(V[2]), np.imag(V[2]), 'b+')
+            self.scatterplots[1, 1].canvas.ax1.plot(np.real(V[3]), np.imag(V[3]), 'm+')
+        elif self.rData.Res['ts'] > 0:
+            self.scatterplots[0, 0].canvas.ax1.plot(np.real(self.rData.ave4[:, 0]),
+                                                     np.imag(self.rData.ave4[:, 0]), 'ro')
+            self.scatterplots[0, 1].canvas.ax1.plot(np.real(self.rData.ave4[:, 1]),
+                                                     np.imag(self.rData.ave4[:, 1]), 'go')
+            self.scatterplots[1, 0].canvas.ax1.plot(np.real(self.rData.ave4[:, 2]),
+                                                     np.imag(self.rData.ave4[:, 2]), 'bo')
+            self.scatterplots[1, 1].canvas.ax1.plot(np.real(self.rData.ave4[:, 3]),
+                                                     np.imag(self.rData.ave4[:, 3]), 'mo')
+            self.scatterplots[0, 1].canvas.ax1.scatter(**self.rData.Cir[1].plot_mycircle(), marker='.', s=1, cmap='Greens')
+            self.scatterplots[1, 0].canvas.ax1.scatter(**self.rData.Cir[2].plot_mycircle(), marker='.', s=1, cmap='Blues')
+            self.scatterplots[1, 1].canvas.ax1.scatter(**self.rData.Cir[3].plot_mycircle(), marker='.', s=1, cmap='Purples')
         for j in range(2):
             for i in range(2):
                 self.scatterplots[i, j].canvas.draw()
@@ -476,25 +524,29 @@ class MainWindow(QMainWindow):
         for j in range(2):
             self.alphafplots[0, j].canvas.draw()
 
-    def plotcircles(self):
-        if self.allData.countf(self.fsig) == 0:
+    def plotpsa(self):
+        if self.rSet.ts <= 0:
             return
-        for j in range(2):
-            for i in range(2):
-                self.ciplots[i, j].canvas.ax1.cla()
-        mykeys = ['ts', 'V2cplxradius', 'V3cplxradius', 'V4cplxradius', 'V1setcplxradius']
-        rdict = self.allData.getkeys(self.fsig, mykeys)
-        self.ciplots[0, 0].canvas.ax1.plot(rdict['ts']-self.t0, np.abs(rdict['V2cplxradius']), 'ro')
-        self.ciplots[0, 1].canvas.ax1.plot(rdict['ts']-self.t0, np.abs(rdict['V1setcplxradius']), 'bo')
-        self.ciplots[1, 0].canvas.ax1.plot(rdict['ts']-self.t0, np.abs(rdict['V3cplxradius']), 'ro')
-        self.ciplots[1, 1].canvas.ax1.plot(rdict['ts']-self.t0, np.abs(rdict['V4cplxradius']), 'bo')
-        self.ciplots[0, 0].canvas.ax1.set_ylabel('r(V2 meas)')
-        self.ciplots[0, 1].canvas.ax1.set_ylabel('r(V1 set)')
-        self.ciplots[1, 0].canvas.ax1.set_ylabel('r(V3 meas)')
-        self.ciplots[1, 1].canvas.ax1.set_ylabel('r(V4 meas)')
-        for j in range(2):
-            for i in range(2):
-                self.ciplots[i, j].canvas.draw()
+        fsamp = self.rSet.fsamp
+        fsig  = self.rSet.fsig
+        colors = ['r', 'g', 'b', 'm']
+        labels = ['Ch1', 'Ch2', 'Ch3', 'Ch4']
+        for idx, (row, col) in enumerate([(0, 0), (0, 1), (1, 0), (1, 1)]):
+            ax = self.psaplots[row, col].canvas.ax1
+            ax.cla()
+            data = np.asarray(self.rSet.Data[idx].data, dtype=float)
+            n = len(data)
+            w = np.hanning(n)
+            amp = np.abs(np.fft.rfft(data * w)) / (np.sum(w) / 2)
+            freqs = np.fft.rfftfreq(n, d=1.0 / fsamp)
+            ax.semilogy(freqs[1:], amp[1:], colors[idx] + '-', linewidth=0.5)
+            ax.axvline(x=fsig, color='k', linestyle='--', linewidth=0.8)
+            ax.set_xscale('log')
+            ax.set_xlabel('f (Hz)')
+            ax.set_ylabel(labels[idx])
+        for row in range(2):
+            for col in range(2):
+                self.psaplots[row, col].canvas.draw()
 
     def plotraw(self):
         if self.rSet.ts <= 0:
