@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
         self.mytext = []
         self.mytextmaxlen = 1000
         self.tzaport = []
-        for p in serial.tools.list_ports.comports():
+        for p   in serial.tools.list_ports.comports():
             if p.description.startswith('TZA/OPM500'):
                 self.tzaport.append(p.device)
         self.tza1 = TZA.TZA(self.tzaport[1])
