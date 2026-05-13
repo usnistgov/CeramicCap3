@@ -79,7 +79,17 @@ class oneCap:
              #                 0    1                2              3     4          5             6                    7    8
             self.ana.append(line)
         self.ana= np.array(self.ana)
-        
+        self.md={'f':0,\
+                 'left gain(abs)':1,
+                 'left gain(ang)':2,
+                 'left alpha':3,
+                 'left D':4,
+                 'right gain(abs)':5,
+                 'right gain(ang)':6,
+                 'right alpha':7,
+                 'right D':8,
+                 'diff alpha':9,
+                 'diff D ':10}
         self.ana_mean, self.ana_std =  self.average(self.ana)
         self.f = self.ana_mean[:,0]
         indices = self.f.argsort()
@@ -122,6 +132,7 @@ class completeSet:
         for b,f in zip(bds,fns):
             self.myCaps.append(oneCap(b,f))
 
+        self.di =self.myCaps[0].di
         self.f = self.myCaps[0].ana_mean[:,0]
         self.w = 2*np.pi*self.f
         alpha=[]
