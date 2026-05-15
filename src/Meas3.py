@@ -47,8 +47,9 @@ class Meas(QObject):
     dataSetReady = pyqtSignal(CustomData.FourChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts):
-        self.bdraw = r'c:\RAWDATA'
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False):
+        self.bdraw = rawdatadir
+        self.saverawdata = saverawdata
         super().__init__()
         self.NDpts = NDpts
         self.Npts = 2*NDpts
@@ -192,11 +193,12 @@ class Meas(QObject):
             ch2 = self.dvm.query_binary_values('FETCH3? (@102)', datatype='f', is_big_endian=True)
         ch3 = self.dvm.query_binary_values('FETCH3? (@103)', datatype='f', is_big_endian=True)
         ch4 = self.dvm.query_binary_values('FETCH3? (@104)', datatype='f', is_big_endian=True)
-        now = datetime.datetime.now()
-        timestamp = now.strftime("%Y%m%d_%H%M%S")
-        self.bd = os.path.join(self.bdraw, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
-        os.makedirs(self.bd, exist_ok=True)
-        fn = os.path.join(self.bd, f"ceramic_raw_{timestamp}.npz")
-        np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3, ch4=ch4)
+        if self.saverawdata:
+            now = datetime.datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            bd = os.path.join(self.bdraw, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
+            os.makedirs(bd, exist_ok=True)
+            fn = os.path.join(bd, f"ceramic_raw_{timestamp}.npz")
+            np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3, ch4=ch4)
         self.rawN.setPoint(self.co, ch1, ch2, ch3, ch4, self.V1rb, self.V2rb, time.time())
         self.dataSetReady.emit(self.rawN.Data[self.co])

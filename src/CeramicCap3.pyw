@@ -39,6 +39,9 @@ from PyQt5.QtWidgets import (
 )
 
 
+_logdir = ''
+
+
 class MainWindow(QMainWindow):
     stopDVM = pyqtSignal()
     resetDone = pyqtSignal()
@@ -52,7 +55,7 @@ class MainWindow(QMainWindow):
         self.quit = False
         self.measuring = False
         self.loopfinished = False
-        self.yyyymmdir = r'C:\CAPDATA\LOG'
+        self.yyyymmdir = ''
         self.mytext = []
         self.mytextmaxlen = 1000
         self.tzaport = []
@@ -73,7 +76,6 @@ class MainWindow(QMainWindow):
         self.tza1.set_fgain(self.g1)
         self.tza2.set_fgain(self.g2)
         self.firstgood = False
-        self.corrected_V1pts = None
 
         self.fsigold = -1
         self.rData = CustomData.NPoints(1000, 800000)
@@ -220,6 +222,11 @@ class MainWindow(QMainWindow):
         self.dvfrac = self.config.dvfrac
         self.nrMeas = self.config.nrMeas
         self.datadir = self.config.datadir
+        self.yyyymmdir   = self.config.logdir
+        self.rawdatadir  = self.config.rawdatadir
+        self.saverawdata = self.config.saverawdata
+        global _logdir
+        _logdir = self.config.logdir
 
     def RBupdate(self):
         for rb in self.rb1:
@@ -259,6 +266,7 @@ class MainWindow(QMainWindow):
 
     def rb1Toggled(self, button, checked):
         if checked:
+            self.tza1.set_hgain(button.text())
             self.g1 = self.tza1.text_to_gain(button.text())
 
     def rb2Toggled(self, button, checked):
@@ -293,7 +301,6 @@ class MainWindow(QMainWindow):
     def onNewData(self, MyData: CustomData.NPoints):
         self.livePhasors = [[] for _ in range(4)]
         self.rData = MyData
-        self.corrected_V1pts = MyData.Res.get('V1_corrected', None)
         self.V1 = self.rData.Res['V1_balance']
         m = self.rData.Res['V4fit_slope']
         c = self.rData.Res['V4fit_intercept']
@@ -341,7 +348,7 @@ class MainWindow(QMainWindow):
             self.close()
         elif self.measuring:
             self.thread = QThread()
-            self.mydvm = Meas(self.mutex, self.Npts)
+            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata)
             self.mydvm.moveToThread(self.thread)
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
@@ -350,10 +357,7 @@ class MainWindow(QMainWindow):
                     self.V1 = self.V1*0.9
                     self.V2 = self.V2*0.9
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
-                if self.corrected_V1pts is not None:
-                    self.mydvm.storeV1pts(self.corrected_V1pts)
             else:
-                self.corrected_V1pts = None  # reset on frequency change
                 self.g1 = R2FMath.newgainvalue1(self.fsig, self.C31, self.C41)
                 #self.g1 = R2FMath.newgainvalue1(self.fsig, self.C31, 1e-6)
                 self.g2 = R2FMath.newgainvalue2(self.fsig, self.C41)
@@ -451,7 +455,7 @@ class MainWindow(QMainWindow):
             shutil.copy2(self.config.cfgpath, os.path.join(bd0, fn_conf))
         fn = 'CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         mykeys = ['fsig', 'ts', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean',
-                  'Vz3', 'Vz4', 'gamma3', 'gamma4', 'V2setamp']
+                  'Vz3', 'Vz4', 'gamma3', 'gamma4', 'V1cReadback']
         rdict = self.allData.getkeys(f, mykeys)
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
@@ -493,7 +497,6 @@ class MainWindow(QMainWindow):
         for j in range(2):
             for i in range(2):
                 self.scatterplots[i, j].canvas.ax1.cla()
-        panels = [(0, 1, 'g'), (1, 0, 'b'), (1, 1, 'm')]
         if self.livePhasors[0]:
             V1 = np.array(self.livePhasors[0])
             V2 = np.array(self.livePhasors[1])
@@ -701,7 +704,8 @@ def excepthook(exc_type, exc_value, exc_tb):
     now = datetime.datetime.now()
     print("error catched at ", now)
     print("error message:\n", tb)
-    with open('R2F_errlog.dat', 'w') as fi:
+    errlog = os.path.join(_logdir or os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'R2F_errlog.dat')
+    with open(errlog, 'w') as fi:
         fi.write("error catched!:\n")
         fi.write("error message:\n" + tb)
     app.quit()

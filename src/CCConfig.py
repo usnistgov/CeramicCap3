@@ -19,7 +19,10 @@ class CCC():
         self.fstart = float(self.meas['FSTART'])
         self.dvfrac = float(self.meas['DVFRAC'])
         self.nrMeas=int(self.meas['MEASPERFREQ'])
-        self.datadir =self.meas['DATADIR']
+        self.datadir    = self.meas['DATADIR']
+        self.logdir     = self.meas['LOGDIR']
+        self.rawdatadir = self.meas['RAWDATADIR']
+        self.saverawdata = self.cp['MEAS'].getboolean('saverawdata', fallback=False)
 
         k1='CONFIG'
         for k2 in list(self.cp[k1].keys()):
@@ -64,18 +67,6 @@ class CCC():
         self.cp['MEAS']['gain1'] = str(int(g1))
         self.cp['MEAS']['gain2'] = str(int(g2))
         self.save()
-
-    def setNrMeasBeforeVadj(self,value):
-            k1='MEAS'
-            k2='NrMeasBeforeVadj'
-            self.cp[k1][k2]=f"{value:.0f}"
-            self.save()
-
-    def setNrMeasBeforefadj(self,value):
-            k1='MEAS'
-            k2='NrMeasBeforefadj'
-            self.cp[k1][k2]=f"{value:.0f}"
-            self.save()
 
 
 

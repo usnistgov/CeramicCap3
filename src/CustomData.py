@@ -97,15 +97,6 @@ def get_f(y, fsamp, fsig_guess, fline_guess=60.0, use_hann=True, Nhars=1):
         
 
 
-class MyData:
-    def __init__(self, ave4,ts):
-        self.ave4 = ave4
-        self.ts = ts
-
-    def __str__(self):
-        return f"TS: {self.ts}"
-
-
 class SampleData:
     def __init__(self,fsig,fsamp,data,Nhars=1):
         self.data  = np.array(data)
@@ -221,7 +212,7 @@ class NPoints:
         self.Res['beta3mean']  = np.mean(self.beta3)
         self.Res['alpha4mean'] = np.mean(self.alpha4)
         self.Res['beta4mean']  = np.mean(self.beta4)
-        self.Res['V2setamp'] = self.V1c
+        self.Res['V1cReadback'] = self.V1c
 
         self.setGoodFlag()
 
@@ -284,7 +275,7 @@ class AllData():
         if len(allf)==0:
             for k in keys:
                 retdict[k]=np.array([])
-                return retdict
+            return retdict
         else:
             for k in keys:
                 retdict[k]=[]
@@ -296,26 +287,6 @@ class AllData():
             for k in keys:
                 retdict[k] =np.array(retdict[k])
             return retdict
-
-
-    def getAveVolts(self,f,t0=0):
-        L = len(self.mydict[f])
-        Nrows = np.shape(self.mydict[f][0].ave4)[0]  
-        Ncols = 2+2*np.shape(self.mydict[f][0].ave4)[1]   +2*np.shape(self.mydict[f][0].ctrla)[1]
-        #ret = np.empty(Nrows*L,Ncols)
-        ret =[]
-        
-        obj = self.mydict[f][-1]
-        Nrows = np.shape(obj.ave4)[0]
-        for j in range(Nrows):
-            line  = np.hstack((f,obj.Res['ts']-t0))
-            for k in range(np.shape(obj.ave4)[1]):
-                line =np.hstack((line,obj.ave4[j,k].real,obj.ave4[j,k].imag))
-            for k in range(np.shape(obj.ctrla)[1]):
-                line =np.hstack((line,obj.ctrla[j,k].real,obj.ctrla[j,k].imag))
-            ret.append(line)            
-        ret = np.array(ret)
-        return ret
 
 
     def getRawPhasors(self,f,t0=0):
@@ -337,31 +308,6 @@ class AllData():
         ret = np.array(ret)
         return ret
 
-
-
-    def getabf(self):
-        f=list(self.mydict)
-        ret=[]
-        for ff in f:
-            dummy=[]
-            for a in self.mydict[ff]:
-                dummy.append(np.hstack((a.Res['alpha3mean'], a.Res['beta3mean'], a.Res['alpha4mean'], a.Res['beta4mean'])))
-            dummy = np.array(dummy)
-            da = dummy[:,2]-dummy[:,0]
-            db = dummy[:,3]-dummy[:,1]
-            if len(da)>2:
-                sa =np.std(da,ddof=1)
-            else:
-                sa=0
-            if len(db)>2:
-                sb =np.std(db,ddof=1)
-            else:
-                sb=0
-            ret.append(np.hstack((np.mean(da),np.mean(db),sa,sb)))
-
-        return np.array(f),np.array(ret)
-
-        
 
 
 
