@@ -15,12 +15,7 @@ class CCC():
         k1='MEAS'
         for k2 in list(self.cp[k1].keys()):
             self.meas[k2.upper()]=self.cp[k1][k2]
-        self.finelist = [float(i) for i in self.meas['FINELIST'].split(',')]
-        self.coarselist = [float(i) for i in self.meas['COARSELIST'].split(',')]
-        if self.cp['MEAS'].getboolean('USEFINE'):
-            self.flist = self.finelist
-        else:
-            self.flist = self.coarselist
+        self.flist = [float(i) for i in self.meas['FREQLIST'].split(',')]
         self.fstart=float(self.meas['FSTART'])
         self.nrMeas=int(self.meas['MEASPERFREQ'])
         self.datadir =self.meas['DATADIR']
@@ -33,7 +28,7 @@ class CCC():
             elif k2u=='BOTTOMLEFT':
                 self.C32 = self.capdict[self.cp[k1][k2].upper()]
             elif k2u=='TOPRIGHT':
-                self.C41 = self.capdict[self.cp[k1][k2].upper()]
+                 self.C41 = self.capdict[self.cp[k1][k2].upper()]
             elif k2u=='BOTTOMRIGHT':
                 self.C42 = self.capdict[self.cp[k1][k2].upper()]
             elif k2u=='SNTOPLEFT':
@@ -86,8 +81,6 @@ if __name__=="__main__":
     print(f"{config.C31=} {config.C32=} {config.C41=} {config.C42=}")
     print(f"{config.SN31=} {config.SN32=} {config.SN41=} {config.SN42=}")
     print(config.recapdir[config.C31])
-    print(f"{config.finelist}")
-    print(f"{config.coarselist}")
     print(f"{config.flist}")
     print(f"{config.datadir}")
 

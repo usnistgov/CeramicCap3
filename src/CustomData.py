@@ -1,4 +1,3 @@
-import R2FMath
 import numpy as np
 import scipy.optimize
 
@@ -183,65 +182,54 @@ class NPoints:
 
     def calc(self):
         self.precalc()
-        self.Cir = np.zeros(self.N//2,dtype=object)
-        la=['V1cplxcenter','V1cplxradius','V1cplxangle','V2cplxcenter','V2cplxradius','V2cplxangle',\
-            'V3cplxcenter','V3cplxradius','V3cplxangle','V4cplxcenter','V4cplxradius','V4cplxangle']
-        for i in range(4):
-            if i!=0:
-                self.Cir[i] = R2FMath.FourPlusCplxPts(self.ave4[:,i])
-                #R2FMath.FourCplxPts(self.ave4[:,i])
-                self.Res[la[i*3]]= self.Cir[i].cplxcenter
-                self.Res[la[i*3+1]]= self.Cir[i].cplxradius
-                self.Res[la[i*3+2]]= self.Cir[i].cplxangle
-            else:
-                self.Res[la[i*3]]= np.mean(self.ave4[:,i])
-                self.Res[la[i*3+1]]= 1e-20
-                self.Res[la[i*3+2]]= 0
+        self.V1m = self.ave4[:, 0]
+        self.V2m = self.ave4[:, 1]
+        self.V3m = self.ave4[:, 2]
+        self.V4m = self.ave4[:, 3]
+        self.eta2 = self.V2m / self.V1m
+        self.eta3 = self.V3m / self.V1m
+        self.eta4 = self.V4m / self.V1m
 
-        self.Res['V1setamp']= self.V1c
-        self.V2fit= R2FMath.FourPlusCplxPts(self.ctrla[:,1])        
-        self.Res['V2setcplxcenter']= self.V2fit.cplxcenter
-        self.Res['V2setcplxradius']= self.V2fit.cplxradius
-        self.Res['V2setcplxangle']= self.V2fit.cplxangle
+        Xmat = np.column_stack([self.eta2, np.ones(len(self.eta2))])
+        (m3, c3), _, _, _ = np.linalg.lstsq(Xmat, self.eta3, rcond=None)
+        (m4, c4), _, _, _ = np.linalg.lstsq(Xmat, self.eta4, rcond=None)
+        self.gamma3 = 1.0 / m3
+        self.gamma4 = 1.0 / m4
+        self.Res['Vz3'] = c3 / m3
+        self.Res['Vz4'] = c4 / m4
+        self.Res['gamma3'] = self.gamma3
+        self.Res['gamma4'] = self.gamma4
+        N2 = self.N // 2
+        V4_raw = np.array([0.5*(self.Data[2*k].Data[3].Vc + self.Data[2*k+1].Data[3].Vc)
+                           for k in range(N2)])
+        V1rb_pts = self.ctrla[:, 0]
+        Xmat = np.column_stack([V1rb_pts, np.ones(N2)])
+        (m_bal, c_bal), _, _, _ = np.linalg.lstsq(Xmat, V4_raw, rcond=None)
+        self.Res['V4fit_slope'] = m_bal
+        self.Res['V4fit_intercept'] = c_bal
+        self.Res['V1_balance'] = -c_bal / m_bal
 
+        self.combined3 = self.gamma3 * self.eta3 - self.eta2
+        self.combined4 = self.gamma4 * self.eta4 - self.eta2
 
-        self.pars3,self.vals3,self.errs3,self.Chi3,self.Cov3 = R2FMath.mycomplexfit(self.ctrla[:,1],\
-                             self.ave4[:,2])
-        self.pars4,self.vals4,self.errs4,self.Chi4,self.Cov4 = R2FMath.mycomplexfit(self.ctrla[:,1],\
-                             self.ave4[:,3])
-        result3=-(self.pars3[0]+1j*self.pars3[1])/(self.pars3[2]+1j*self.pars3[3])                
-        result4=-(self.pars4[0]+1j*self.pars4[1])/(self.pars4[2]+1j*self.pars4[3])        
-        self.Res['Vz3']= result3
-        self.Res['Vz4']= result4
-
-        self.V1m = self.ave4[:,0]
-        self.V2m = self.ave4[:,1]
-        self.V3m = self.ave4[:,2]
-        self.V4m = self.ave4[:,3]
-        self.u =self.V1m/self.V2m+self.Res['ratio']
-        self.v3 = self.V3m/self.V2m
-        self.v4 = self.V4m/self.V2m
-        self.fp3, self.fv3,self.fe3,self.C23,self.Cov3 = R2FMath.mycomplexfit(self.v3,self.u)
-        self.fp4, self.fv4,self.fe4,self.C24,self.Cov4 = R2FMath.mycomplexfit(self.v4,self.u)
-        self.gain3  = self.fp3[2]+1j*self.fp3[3]
-        self.gain4  = self.fp4[2]+1j*self.fp4[3]
-        self.alpha3 = np.real(-self.u+ self.gain3*self.v3)/self.Res['ratio']
-        self.beta3  = np.imag(-self.u+ self.gain3*self.v3)/self.Res['ratio']
-        self.alpha4 = np.real(-self.u+ self.gain4*self.v4)/self.Res['ratio']
-        self.beta4  = np.imag(-self.u+ self.gain4*self.v4)/self.Res['ratio']
+        ratio = self.Res['ratio']
+        self.alpha3 = np.real(self.combined3) / ratio - 1
+        self.beta3  = np.imag(self.combined3) / ratio
+        self.alpha4 = np.real(self.combined4) / ratio - 1
+        self.beta4  = np.imag(self.combined4) / ratio
         self.Res['alpha3mean'] = np.mean(self.alpha3)
         self.Res['beta3mean']  = np.mean(self.beta3)
         self.Res['alpha4mean'] = np.mean(self.alpha4)
-        self.Res['beta4mean']  = np.mean(self.beta4)            
+        self.Res['beta4mean']  = np.mean(self.beta4)
+        self.Res['V2setamp'] = self.V1c
 
         self.setGoodFlag()
 
     def setGoodFlag(self):
-        self.goodData=True
-        if abs(self.Res['V3cplxcenter'])>1:
-            self.goodData=False
-        if abs(self.Res['V4cplxcenter'])>1:
-            self.goodData=False
+        self.goodData = not (
+            np.any(~np.isfinite(np.abs(self.combined3))) or
+            np.any(~np.isfinite(np.abs(self.combined4)))
+        )
 
 
 class AllData():

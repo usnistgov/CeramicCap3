@@ -1,4 +1,4 @@
-import os, sys, pathlib
+import os, sys, pathlib, threading
 import traceback
 import ctypes
 import datetime
@@ -10,8 +10,7 @@ import serial
 import serial.tools.list_ports
 import TZA
 import CCConfig
-from Voltfield import VoltField
-from Meas3 import Meas
+from Meas3 import Meas, reset_instruments
 from Tabwidget import MyTabWidget
 import CustomData
 import CircuitSetup
@@ -19,6 +18,7 @@ import CircuitSetup
 from PyQt5.QtCore import (
     QMutex,
     QThread,
+    Qt,
     pyqtSignal)
 
 from PyQt5.QtWidgets import (
@@ -41,6 +41,7 @@ from PyQt5.QtWidgets import (
 
 class MainWindow(QMainWindow):
     stopDVM = pyqtSignal()
+    resetDone = pyqtSignal()
 
     def __init__(self, mutex):
         super().__init__()
@@ -51,7 +52,7 @@ class MainWindow(QMainWindow):
         self.quit = False
         self.measuring = False
         self.loopfinished = False
-        self.yyyymmdir = r'C:\DATA\CERAMIC\202509'
+        self.yyyymmdir = r'C:\CAPDATA\LOG'
         self.mytext = []
         self.mytextmaxlen = 1000
         self.tzaport = []
@@ -64,14 +65,15 @@ class MainWindow(QMainWindow):
         self.thread = QThread()
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        self.V2 = 1.811+2.578j
-        self.V1 = -9.9+0j
+        self.V1 = 1.811+2.578j   # small modulated center (SOUR1)
+        self.V2 = -9.9+0j        # large constant (SOUR2)
         self.dV = 0.1
         self.g1 = 10000
         self.g2 = 100
         self.tza1.set_fgain(self.g1)
         self.tza2.set_fgain(self.g2)
         self.firstgood = False
+        self.corrected_V1pts = None
 
         self.fsigold = -1
         self.rData = CustomData.NPoints(1000, 800000)
@@ -101,9 +103,14 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.psaplots[i, j] = mplwidget.MplWidget(rightax=False)
 
-        self.alphafplots = np.empty((1, 2), dtype=object)
+        self.alphafplots = np.empty((2, 2), dtype=object)
+        for i in range(2):
+            for j in range(2):
+                self.alphafplots[i, j] = mplwidget.MplWidget(rightax=(i == 1))
+
+        self.etaplots = np.empty((1, 2), dtype=object)
         for j in range(2):
-            self.alphafplots[0, j] = mplwidget.MplWidget(rightax=False)
+            self.etaplots[0, j] = mplwidget.MplWidget(rightax=False)
 
         self.output = QTextEdit(self)
         self.output.resize(540, 200)
@@ -115,11 +122,6 @@ class MainWindow(QMainWindow):
 
         glayout = QHBoxLayout()
         vlayout = QVBoxLayout()
-        vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Fixed))
-        vlayout.addWidget(QLabel('dV'))
-        self.VF_dV = VoltField(self, self.dV)
-        vlayout.addWidget(self.VF_dV)
-
         vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Fixed))
 
         self.buStart = QPushButton("Start")
@@ -189,7 +191,19 @@ class MainWindow(QMainWindow):
         self.buQuit.clicked.connect(self.finishUp)
         self.bufp.clicked.connect(self.fp)
         self.bufm.clicked.connect(self.fm)
+        self.resetDone.connect(self._on_reset_done)
+        self.buStart.setEnabled(False)
+        self.statusBar.showMessage('Initializing instruments...', 0)
+        threading.Thread(target=self._reset_bg, daemon=True).start()
+
+    def _reset_bg(self):
+        reset_instruments()
+        self.resetDone.emit()
+
+    def _on_reset_done(self):
+        self.buStart.setEnabled(True)
         self.statusBar.showMessage('Ready — press Start to begin', 0)
+        self.myprint('Instruments reset and ready')
 
     def parseconfig(self):
         self.config.read()
@@ -207,8 +221,6 @@ class MainWindow(QMainWindow):
         self.myprint("S/N: {0} {1} {2} {3}".format(self.SN31, self.SN32, self.SN41, self.SN42))
 
         self.fsig = self.config.fstart
-        self.finelist = self.config.finelist
-        self.coarselist = self.config.coarselist
         self.flist = self.config.flist
         self.nrMeas = self.config.nrMeas
         self.datadir = self.config.datadir
@@ -281,13 +293,15 @@ class MainWindow(QMainWindow):
             self.myprint("Quitting gracefully")
             event.accept()
 
-    def newValues(self):
-        self.dV = self.VF_dV.value()
 
     def onNewData(self, MyData: CustomData.NPoints):
         self.livePhasors = [[] for _ in range(4)]
         self.rData = MyData
-        self.V2 = self.rData.Res['Vz4']
+        self.corrected_V1pts = MyData.Res.get('V1_corrected', None)
+        self.V1 = self.rData.Res['V1_balance']
+        m = self.rData.Res['V4fit_slope']
+        c = self.rData.Res['V4fit_intercept']
+        self.myprint(f"V4 fit: slope={m:.5f}  intercept={c:.5f}  V1_balance={self.V1:.5f}")
         if self.rData.goodData:
             if self.firstgood:
                 self.allData.append(self.rData)
@@ -304,20 +318,20 @@ class MainWindow(QMainWindow):
                     self.fp()
         self.replot()
 
-    def calcVsmall(self, f, V1=-9.0, R=50):
+    def calcVsmall(self, f, V2=-9.0, R=50):
         C42 = self.C42
         C41 = self.C41
         iw = 1j*f*2*np.pi
-        I1 = V1*iw*C42/(1+iw*C42*R)
-        V2 = -I1*(R+1/(iw*C41))
-        return V2
+        I1 = V2*iw*C42/(1+iw*C42*R)
+        V1 = -I1*(R+1/(iw*C41))
+        return V1
 
     def startMeas(self):
         self.circuit_setup.save_config()
         self.parseconfig()
         self.measuring = True
         self.buStart.setEnabled(False)
-        self.fsig = self.flist[0]
+        self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
         self.firstgood = False
         self.progressBar.setValue(0)
@@ -336,24 +350,31 @@ class MainWindow(QMainWindow):
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
             if self.fsigold == self.fsig:
-                while np.abs(self.V2) > 9:
+                while np.abs(self.V1) > 9:
                     self.V1 = self.V1*0.9
                     self.V2 = self.V2*0.9
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
+                if self.corrected_V1pts is not None:
+                    self.mydvm.storeV1pts(self.corrected_V1pts)
             else:
+                self.corrected_V1pts = None  # reset on frequency change
                 self.g1 = R2FMath.newgainvalue1(self.fsig, self.C31, self.C41)
+                #self.g1 = R2FMath.newgainvalue1(self.fsig, self.C31, 1e-6)
                 self.g2 = R2FMath.newgainvalue2(self.fsig, self.C41)
+                #self.g1 = 1
+                #self.g2 = 1
                 self.myprint('pick gains {0} {1}'.format(self.g1, self.g2))
                 self.tza1.set_fgain(self.g1)
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
                 self.firstgood = False
-                self.V1 = -9.9+0j
-                self.V2 = self.calcVsmall(self.fsig, V1=self.V1)
-                while np.abs(self.V2) > 9:
-                    self.V1 = self.V1*0.9
-                    self.V2 = self.calcVsmall(self.fsig, V1=self.V1)
-                self.dV = np.abs(self.V2)/20
+                self.V2 = -9.9+0j
+                self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
+                while np.abs(self.V1) > 9:
+                    self.V2 = self.V2*0.9
+                    self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
+                self.dV = np.abs(self.V1)/1000
+                self.myprint(f'{self.V1=} {self.V2=} {self.dV=}')
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
             self.laUpdate()
             self.mydvm.logMessage.connect(self.myprint)
@@ -362,7 +383,7 @@ class MainWindow(QMainWindow):
             self.mydvm.finished.connect(self.thread.quit)
             self.mydvm.finished.connect(self.mydvm.deleteLater)
             self.thread.finished.connect(self.goagain)
-            self.stopDVM.connect(self.mydvm.stop)
+            self.stopDVM.connect(self.mydvm.stop, Qt.DirectConnection)
             self.thread.started.connect(self.mydvm.start)
             self.thread.finished.connect(self.thread.deleteLater)
             self.thread.start()
@@ -390,7 +411,9 @@ class MainWindow(QMainWindow):
         t2 = n.strftime('%m/%d')+' '+t1+'\n'
         fn = 'CAP'+n.strftime('%m%d%Y')+'.LOG'
         if self.yyyymmdir != '':
-            with open(os.path.join(self.yyyymmdir, fn), "a") as file:
+            logdir = os.path.join(self.yyyymmdir, n.strftime('%Y%m'))
+            pathlib.Path(logdir).mkdir(parents=True, exist_ok=True)
+            with open(os.path.join(logdir, fn), "a") as file:
                 file.write(t2)
         self.mytext.append(t1)
         while len(self.mytext) > self.mytextmaxlen:
@@ -411,6 +434,8 @@ class MainWindow(QMainWindow):
             self.plotpsa()
         elif tat == 'alpha(f)':
             self.plotalphaf()
+        elif tat == 'eta':
+            self.ploteta()
         elif tat == 'last status':
             self.showLastStatus()
 
@@ -425,9 +450,7 @@ class MainWindow(QMainWindow):
         valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
         fn = 'CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         mykeys = ['fsig', 'ts', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean',
-                  'V2cplxcenter', 'V2cplxradius', 'V2cplxangle', 'V3cplxcenter', 'V3cplxradius', 'V3cplxangle',
-                  'V4cplxcenter', 'V4cplxradius', 'V4cplxangle', 'V1setamp', 'V2setcplxcenter', 'V2setcplxradius', 'V2setcplxangle',
-                  'Vz3', 'Vz4']
+                  'Vz3', 'Vz4', 'gamma3', 'gamma4', 'V2setamp']
         rdict = self.allData.getkeys(f, mykeys)
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
@@ -469,26 +492,33 @@ class MainWindow(QMainWindow):
         for j in range(2):
             for i in range(2):
                 self.scatterplots[i, j].canvas.ax1.cla()
+        panels = [(0, 1, 'g'), (1, 0, 'b'), (1, 1, 'm')]
         if self.livePhasors[0]:
-            V0 = np.array(self.livePhasors[0])
-            phases = np.exp(-1j * np.angle(V0))
-            V = [np.array(self.livePhasors[j]) * phases for j in range(4)]
-            self.scatterplots[0, 0].canvas.ax1.plot(np.real(V[0]), np.imag(V[0]), 'r+')
-            self.scatterplots[0, 1].canvas.ax1.plot(np.real(V[1]), np.imag(V[1]), 'g+')
-            self.scatterplots[1, 0].canvas.ax1.plot(np.real(V[2]), np.imag(V[2]), 'b+')
-            self.scatterplots[1, 1].canvas.ax1.plot(np.real(V[3]), np.imag(V[3]), 'm+')
+            V1 = np.array(self.livePhasors[0])
+            V2 = np.array(self.livePhasors[1])
+            V3 = np.array(self.livePhasors[2])
+            V4 = np.array(self.livePhasors[3])
+            eta2 = V2/V1
+            eta3 = V3/V1
+            eta4 = V4/V1
+            self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1),  np.imag(V1), 'r+')
+            self.scatterplots[0, 1].canvas.ax1.plot(np.real(eta2), np.imag(eta2), 'g+')
+            self.scatterplots[1, 0].canvas.ax1.plot(np.real(eta3), np.imag(eta3), 'b+')
+            self.scatterplots[1, 1].canvas.ax1.plot(np.real(eta4), np.imag(eta4), 'm+')
         elif self.rData.Res['ts'] > 0:
-            self.scatterplots[0, 0].canvas.ax1.plot(np.real(self.rData.ave4[:, 0]),
-                                                     np.imag(self.rData.ave4[:, 0]), 'ro')
-            self.scatterplots[0, 1].canvas.ax1.plot(np.real(self.rData.ave4[:, 1]),
-                                                     np.imag(self.rData.ave4[:, 1]), 'go')
-            self.scatterplots[1, 0].canvas.ax1.plot(np.real(self.rData.ave4[:, 2]),
-                                                     np.imag(self.rData.ave4[:, 2]), 'bo')
-            self.scatterplots[1, 1].canvas.ax1.plot(np.real(self.rData.ave4[:, 3]),
-                                                     np.imag(self.rData.ave4[:, 3]), 'mo')
-            self.scatterplots[0, 1].canvas.ax1.scatter(**self.rData.Cir[1].plot_mycircle(), marker='.', s=1, cmap='Greens')
-            self.scatterplots[1, 0].canvas.ax1.scatter(**self.rData.Cir[2].plot_mycircle(), marker='.', s=1, cmap='Blues')
-            self.scatterplots[1, 1].canvas.ax1.scatter(**self.rData.Cir[3].plot_mycircle(), marker='.', s=1, cmap='Purples')
+            V1 = self.rData.ave4[:, 0]
+            V2 = self.rData.ave4[:, 1]
+            V3 = self.rData.ave4[:, 2]
+            V4 = self.rData.ave4[:, 3]
+            eta2 = V2/V1
+            eta3 = V3/V1
+            eta4 = V4/V1
+                #ell = R2FMath.ComplexEllipse.fit_from_cmplx_points(ratio)
+            self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1),  np.imag(V1), 'ro')
+            self.scatterplots[0, 1].canvas.ax1.plot(np.real(eta2), np.imag(eta2), 'go')
+            self.scatterplots[1, 0].canvas.ax1.plot(np.real(eta3), np.imag(eta3), 'bo')
+            self.scatterplots[1, 1].canvas.ax1.plot(np.real(eta4), np.imag(eta4), 'mo')
+
         for j in range(2):
             for i in range(2):
                 self.scatterplots[i, j].canvas.draw()
@@ -513,16 +543,62 @@ class MainWindow(QMainWindow):
     def plotalphaf(self):
         if self.allData.count() == 0:
             return
-        for j in range(2):
-            self.alphafplots[0, j].canvas.ax1.cla()
-        mykeys = ['fsig', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean']
+        for i in range(2):
+            for j in range(2):
+                self.alphafplots[i, j].canvas.ax1.cla()
+        mykeys = ['fsig', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean', 'gamma3', 'gamma4']
         rdict = self.allData.getdictf(mykeys)
-        self.alphafplots[0, 0].canvas.ax1.plot(rdict['fsig'], rdict['alpha3mean'], 'ro')
-        self.alphafplots[0, 1].canvas.ax1.plot(rdict['fsig'], rdict['alpha4mean'], 'bo')
-        self.alphafplots[0, 0].canvas.ax1.set_xscale('log')
-        self.alphafplots[0, 1].canvas.ax1.set_xscale('log')
+        f = rdict['fsig']
+        self.alphafplots[0, 0].canvas.ax1.plot(f, rdict['alpha3mean'], 'ro')
+        self.alphafplots[0, 1].canvas.ax1.plot(f, rdict['alpha4mean'], 'bo')
+        g3 = 1.0 / np.array(rdict['gamma3'], dtype=complex)
+        g4 = 1.0 / np.array(rdict['gamma4'], dtype=complex)
+        for ax, bx, g, label in [
+            (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, g3, 'Y₃₂Z₃'),
+            (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, g4, 'Y₄₂Z₄'),
+        ]:
+            ax.cla()
+            bx.cla()
+            ax.plot(f, np.abs(g), 'r-o', label='|' + label + '|')
+            ax.set_yscale('log')
+            ax.set_ylabel('|' + label + '|')
+            bx.plot(f, np.angle(g, deg=True), 'b-o', label='∠' + label)
+            bx.set_ylabel('∠' + label + ' (°)')
+            lines1, lab1 = ax.get_legend_handles_labels()
+            lines2, lab2 = bx.get_legend_handles_labels()
+            ax.legend(lines1 + lines2, lab1 + lab2, fontsize=8)
+        for i in range(2):
+            for j in range(2):
+                self.alphafplots[i, j].canvas.ax1.set_xscale('log')
+                self.alphafplots[i, j].canvas.draw()
+
+    def ploteta(self):
+        if self.rData.Res['ts'] <= 0 or not hasattr(self.rData, 'combined3'):
+            return
         for j in range(2):
-            self.alphafplots[0, j].canvas.draw()
+            self.etaplots[0, j].canvas.ax1.cla()
+        mul = 1e6
+        offset = self.rData.Res['ratio']
+
+        def split(v):
+            return (np.real(v) - offset) * mul, np.imag(v) * mul
+
+        c3x, c3y   = split(self.rData.combined3)
+        c4x, c4y   = split(self.rData.combined4)
+        Vz3x, Vz3y = split(self.rData.Res['Vz3'])
+        Vz4x, Vz4y = split(self.rData.Res['Vz4'])
+        ax3 = self.etaplots[0, 0].canvas.ax1
+        ax4 = self.etaplots[0, 1].canvas.ax1
+        ax3.plot(c3x, c3y, 'b+')
+        ax3.plot(Vz3x, Vz3y, 'r*', markersize=10)
+        ax3.set_xlabel('(Re(γ₃η₃ − η₂) − ratio) × 10⁶')
+        ax3.set_ylabel('Im(γ₃η₃ − η₂) × 10⁶')
+        ax4.plot(c4x, c4y, 'm+')
+        ax4.plot(Vz4x, Vz4y, 'r*', markersize=10)
+        ax4.set_xlabel('(Re(γ₄η₄ − η₂) − ratio) × 10⁶')
+        ax4.set_ylabel('Im(γ₄η₄ − η₂) × 10⁶')
+        for j in range(2):
+            self.etaplots[0, j].canvas.draw()
 
     def plotpsa(self):
         if self.rSet.ts <= 0:
