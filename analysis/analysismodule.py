@@ -18,6 +18,9 @@ class oneCap:
         self.elli3=[]
         self.elli4=[]
         self.allf = []
+        self.aeta2 =[]
+        self.aeta3 =[]
+        self.aeta4 =[]
         for i in range(0, len(self.ave), 8):
             block = self.ave[i : i + 8,:]
             if len(block) < 8:
@@ -29,6 +32,7 @@ class oneCap:
             V2 = (block[:,4]+1j*block[:,5])
             V3 = (block[:,6]+1j*block[:,7])
             V4 = (block[:,8]+1j*block[:,9])
+
             self.meanV1.append(np.mean(V1))
             self.elliV2.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V2))
             self.elliV3.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V3))
@@ -37,6 +41,9 @@ class oneCap:
             eta2 =  1000*V2/V1
             eta3 =  1000*V3/V1
             eta4 =  1000*V4/V1
+            self.aeta2.append(eta2)
+            self.aeta3.append(eta3)
+            self.aeta4.append(eta4)
 
             elli2 = fitted_ellipse = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta2)
             elli3 = fitted_ellipse = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta3)
@@ -48,15 +55,21 @@ class oneCap:
             #gain4 = (elli4.eta_cw/elli2.eta_cw+elli4.eta_ccw/elli2.eta_ccw)/2
             
             
-            g_left = elli2.eta_cw/elli3.eta_cw
+
+            qu,mm, c = np.polyfit(eta2, eta3, 2)
+
+            g_left = 1/mm#elli2.eta_cw/elli3.eta_cw
 
 
-            y2 = elli2.semi_major/elli4.semi_major
-            y1 = elli2.semi_minor/elli4.semi_minor
-            x2 = elli2.semi_major
-            x1 = elli2.semi_minor
-            g_right = y1 -(y2-y1)/(x2-x1)*x1
+            #y2 = elli2.semi_major/elli4.semi_major
+            #y1 = elli2.semi_minor/elli4.semi_minor
+            #x2 = elli2.semi_major
+            #x1 = elli2.semi_minor
+            #g_right = y1 -(y2-y1)/(x2-x1)*x1
 
+            qu,mm, c = np.polyfit(eta2, eta4, 2)
+
+            g_right = 1/mm#elli2.eta_cw/elli3.eta_cw
 
             #g_right = elli2.eta_cw/elli4.eta_cw
 
@@ -79,7 +92,7 @@ class oneCap:
              #                 0    1                2              3     4          5             6                    7    8
             self.ana.append(line)
         self.ana= np.array(self.ana)
-        self.md={'f':0,\
+        self.di={'f':0,\
                  'left gain(abs)':1,
                  'left gain(ang)':2,
                  'left alpha':3,
@@ -123,17 +136,31 @@ class oneCap:
 
 class completeSet:
     """
-    Assumes that the cap are sorted from smallest to largest. It can be 1,2,3,4,5, caps.
-    They must have measurements at teh same frequencies and that is not checked
-
+    Assumes that the caps are sorted from smallest to largest. It can be 1,2,3,4,5 caps.
+    Measurements may have different frequency sets; the intersection (rounded to nearest Hz)
+    is used.
     """
     def __init__(self,bds,fns,capvals):
         self.myCaps=[]
         for b,f in zip(bds,fns):
             self.myCaps.append(oneCap(b,f))
 
-        self.di =self.myCaps[0].di
-        self.f = self.myCaps[0].ana_mean[:,0]
+        self.di = self.myCaps[0].di
+
+        # Find intersection of frequency sets across all caps, rounded to nearest Hz
+        rounded_freqs = [np.round(cap.ana_mean[:,0]).astype(int) for cap in self.myCaps]
+        common = rounded_freqs[0]
+        for r in rounded_freqs[1:]:
+            common = np.intersect1d(common, r)
+
+        def select_rows(cap, common_hz):
+            cap_rounded = np.round(cap.ana_mean[:,0]).astype(int)
+            idx = [np.where(cap_rounded == f)[0][0] for f in common_hz]
+            return cap.ana_mean[idx, :]
+
+        ana_means = [select_rows(cap, common) for cap in self.myCaps]
+
+        self.f = ana_means[0][:,0]
         self.w = 2*np.pi*self.f
         alpha=[]
         D =[]
@@ -142,13 +169,12 @@ class completeSet:
         D0 =[]
         R0 =[]
         ix = np.argmin((self.f-1000)**2)
-        oldalpha = np.zeros_like(self.myCaps[0].ana_mean[:,9])
-        oldD     = np.zeros_like(self.myCaps[0].ana_mean[:,10])
-        fvals = (self.myCaps[0].ana_mean[:,0])
+        oldalpha = np.zeros(len(common))
+        oldD     = np.zeros(len(common))
 
-        for cap,val in zip(self.myCaps,capvals):
-            alpha.append(cap.ana_mean[:,9]+oldalpha)
-            D.append(cap.ana_mean[:,10]+oldD)
+        for ana_mean,val in zip(ana_means,capvals):
+            alpha.append(ana_mean[:,9]+oldalpha)
+            D.append(ana_mean[:,10]+oldD)
             oldalpha = np.array(alpha[-1])
             oldD     = np.array(D[-1])
             alpha0.append(oldalpha-oldalpha[ix])
