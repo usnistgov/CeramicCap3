@@ -16,7 +16,8 @@ class CCC():
         for k2 in list(self.cp[k1].keys()):
             self.meas[k2.upper()]=self.cp[k1][k2]
         self.flist = [float(i) for i in self.meas['FREQLIST'].split(',')]
-        self.fstart=float(self.meas['FSTART'])
+        self.fstart = float(self.meas['FSTART'])
+        self.dvfrac = float(self.meas['DVFRAC'])
         self.nrMeas=int(self.meas['MEASPERFREQ'])
         self.datadir =self.meas['DATADIR']
 

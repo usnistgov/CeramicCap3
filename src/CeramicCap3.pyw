@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
 
         self.fsig = self.config.fstart
         self.flist = self.config.flist
+        self.dvfrac = self.config.dvfrac
         self.nrMeas = self.config.nrMeas
         self.datadir = self.config.datadir
 
@@ -373,7 +374,7 @@ class MainWindow(QMainWindow):
                 while np.abs(self.V1) > 9:
                     self.V2 = self.V2*0.9
                     self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
-                self.dV = np.abs(self.V1)/1000
+                self.dV = np.abs(self.V1) * self.dvfrac
                 self.myprint(f'{self.V1=} {self.V2=} {self.dV=}')
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
             self.laUpdate()
