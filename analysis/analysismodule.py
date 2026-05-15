@@ -56,7 +56,7 @@ class oneCap:
             
             
 
-            qu,mm, c = np.polyfit(eta2, eta3, 2)
+            mm, c = np.polyfit(eta2, eta3, 1)
 
             g_left = 1/mm#elli2.eta_cw/elli3.eta_cw
 
@@ -67,7 +67,7 @@ class oneCap:
             #x1 = elli2.semi_minor
             #g_right = y1 -(y2-y1)/(x2-x1)*x1
 
-            qu,mm, c = np.polyfit(eta2, eta4, 2)
+            mm, c = np.polyfit(eta2, eta4, 1)
 
             g_right = 1/mm#elli2.eta_cw/elli3.eta_cw
 
@@ -79,6 +79,10 @@ class oneCap:
             ratio3 = (g_left*elli3.eta_o-elli2.eta_o)/1000*10-1
             ratio4 = (g_right*elli4.eta_o-elli2.eta_o)/1000*10-1
 
+
+            ratio3raw = (g_left*elli3.eta_o-elli2.eta_o)
+            ratio4raw = (g_right*elli4.eta_o-elli2.eta_o)
+
             dratio = ratio4-ratio3
 
             al_left     = -ratio3.real        # This is alpha_32 - alpha_31 ~ alpha_32
@@ -88,7 +92,7 @@ class oneCap:
             al_diff     = -dratio.real
             D_diff      =  dratio.imag
             line = np.hstack((f, np.abs(g_left), np.angle(g_left),al_left,D_left ,np.abs(g_right) ,np.angle(g_right), al_right,D_right,
-                              al_diff,D_diff))
+                              al_diff,D_diff,np.real(ratio4raw),np.imag(ratio4raw)))
              #                 0    1                2              3     4          5             6                    7    8
             self.ana.append(line)
         self.ana= np.array(self.ana)
@@ -102,7 +106,10 @@ class oneCap:
                  'right alpha':7,
                  'right D':8,
                  'diff alpha':9,
-                 'diff D ':10}
+                 'diff D ':10,
+                 'rawratio4(re)':11,
+                 'rawratio4(im)':12               
+                 }
         self.ana_mean, self.ana_std =  self.average(self.ana)
         self.f = self.ana_mean[:,0]
         indices = self.f.argsort()
