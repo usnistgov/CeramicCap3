@@ -93,11 +93,6 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.rawplots[i, j] = mplwidget.MplWidget(rightax=False)
 
-        self.abplots = np.empty((2, 2), dtype=object)
-        for i in range(2):
-            for j in range(2):
-                self.abplots[i, j] = mplwidget.MplWidget(rightax=False)
-
         self.psaplots = np.empty((2, 2), dtype=object)
         for i in range(2):
             for j in range(2):
@@ -365,6 +360,7 @@ class MainWindow(QMainWindow):
                 #self.g1 = 1
                 #self.g2 = 1
                 self.myprint('pick gains {0} {1}'.format(self.g1, self.g2))
+                self.config.setGains(self.g1, self.g2)
                 self.tza1.set_fgain(self.g1)
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
@@ -429,8 +425,6 @@ class MainWindow(QMainWindow):
             self.showOutput()
         elif tat == 'raw':
             self.plotraw()
-        elif tat == 'alpha(t)':
-            self.plotalpha()
         elif tat == 'PSA':
             self.plotpsa()
         elif tat == 'alpha(f)':
@@ -441,7 +435,9 @@ class MainWindow(QMainWindow):
             self.showLastStatus()
 
     def ensureDir(self):
-        bd0 = os.path.join(self.datadir, self.SN41)
+        yymm = datetime.datetime.now().strftime('%y%m')
+        dd   = datetime.datetime.now().strftime('%d')
+        bd0 = os.path.join(self.datadir, self.SN41, yymm,dd)
         pathlib.Path(bd0).mkdir(parents=True, exist_ok=True)
         return bd0
 
@@ -449,6 +445,10 @@ class MainWindow(QMainWindow):
         bd0 = self.ensureDir()
         dt = datetime.datetime.fromtimestamp(self.t0)
         valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
+        fn_conf = 'conf_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.ini'
+        if not os.path.exists(os.path.join(bd0, fn_conf)):
+            import shutil
+            shutil.copy2(self.config.cfgpath, os.path.join(bd0, fn_conf))
         fn = 'CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         mykeys = ['fsig', 'ts', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean',
                   'Vz3', 'Vz4', 'gamma3', 'gamma4', 'V2setamp']
@@ -524,50 +524,71 @@ class MainWindow(QMainWindow):
             for i in range(2):
                 self.scatterplots[i, j].canvas.draw()
 
-    def plotalpha(self):
-        if self.allData.countf(self.fsig) == 0:
-            return
-        for j in range(2):
-            for i in range(2):
-                self.abplots[i, j].canvas.ax1.cla()
-        mul = 1e6
-        mykeys = ['ts', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean']
-        rdict = self.allData.getkeys(self.fsig, mykeys)
-        self.abplots[0, 0].canvas.ax1.plot(rdict['ts']-self.t0, rdict['alpha3mean']*mul, 'ro')
-        self.abplots[0, 1].canvas.ax1.plot(rdict['ts']-self.t0, rdict['beta3mean']*mul, 'bo')
-        self.abplots[1, 0].canvas.ax1.plot(rdict['ts']-self.t0, rdict['alpha4mean']*mul, 'ro')
-        self.abplots[1, 1].canvas.ax1.plot(rdict['ts']-self.t0, rdict['beta4mean']*mul, 'bo')
-        for j in range(2):
-            for i in range(2):
-                self.abplots[i, j].canvas.draw()
-
     def plotalphaf(self):
         if self.allData.count() == 0:
             return
         for i in range(2):
             for j in range(2):
                 self.alphafplots[i, j].canvas.ax1.cla()
-        mykeys = ['fsig', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean', 'gamma3', 'gamma4']
-        rdict = self.allData.getdictf(mykeys)
-        f = rdict['fsig']
-        self.alphafplots[0, 0].canvas.ax1.plot(f, rdict['alpha3mean'], 'ro')
-        self.alphafplots[0, 1].canvas.ax1.plot(f, rdict['alpha4mean'], 'bo')
-        g3 = 1.0 / np.array(rdict['gamma3'], dtype=complex)
-        g4 = 1.0 / np.array(rdict['gamma4'], dtype=complex)
-        for ax, bx, g, label in [
-            (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, g3, 'Y₃₂Z₃'),
-            (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, g4, 'Y₄₂Z₄'),
+
+        freqs = sorted(self.allData.mydict.keys())
+
+        def add_scalar(ax, getter, color):
+            f_pts, v_pts, f_bar, v_bar, e_bar = [], [], [], [], []
+            for uf in freqs:
+                vals = np.array([getter(nd) for nd in self.allData.mydict[uf]], dtype=float)
+                if len(vals) > 2:
+                    f_bar.append(uf)
+                    v_bar.append(np.mean(vals))
+                    e_bar.append(np.std(vals, ddof=1))
+                else:
+                    f_pts.extend([uf] * len(vals))
+                    v_pts.extend(vals.tolist())
+            if f_pts:
+                ax.plot(f_pts, v_pts, color + 'o', ms=4)
+            if f_bar:
+                ax.errorbar(f_bar, v_bar, yerr=e_bar, fmt=color + 'o', capsize=3, ms=4)
+
+        add_scalar(self.alphafplots[0, 0].canvas.ax1, lambda nd: nd.Res['alpha3mean'], 'r')
+        add_scalar(self.alphafplots[0, 1].canvas.ax1, lambda nd: nd.Res['alpha4mean'], 'b')
+
+        from matplotlib.lines import Line2D
+        for ax, bx, key, label in [
+            (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, 'gamma3', 'Y₃₂Z₃'),
+            (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, 'gamma4', 'Y₄₂Z₄'),
         ]:
             ax.cla()
             bx.cla()
-            ax.plot(f, np.abs(g), 'r-o', label='|' + label + '|')
+            f_pts, mag_pts, ang_pts = [], [], []
+            f_bar, mag_bar, mag_std, ang_bar, ang_std = [], [], [], [], []
+            for uf in freqs:
+                g = np.array([1.0 / nd.Res[key] for nd in self.allData.mydict[uf]], dtype=complex)
+                mags = np.abs(g)
+                angs = np.angle(g, deg=True)
+                if len(g) > 2:
+                    f_bar.append(uf)
+                    mag_bar.append(np.mean(mags))
+                    mag_std.append(np.std(mags, ddof=1))
+                    ang_bar.append(np.mean(angs))
+                    ang_std.append(np.std(angs, ddof=1))
+                else:
+                    f_pts.extend([uf] * len(g))
+                    mag_pts.extend(mags.tolist())
+                    ang_pts.extend(angs.tolist())
+            if f_pts:
+                ax.plot(f_pts, mag_pts, 'ro', ms=4)
+                bx.plot(f_pts, ang_pts, 'bo', ms=4)
+            if f_bar:
+                ax.errorbar(f_bar, mag_bar, yerr=mag_std, fmt='ro', capsize=3, ms=4)
+                bx.errorbar(f_bar, ang_bar, yerr=ang_std, fmt='bo', capsize=3, ms=4)
             ax.set_yscale('log')
             ax.set_ylabel('|' + label + '|')
-            bx.plot(f, np.angle(g, deg=True), 'b-o', label='∠' + label)
             bx.set_ylabel('∠' + label + ' (°)')
-            lines1, lab1 = ax.get_legend_handles_labels()
-            lines2, lab2 = bx.get_legend_handles_labels()
-            ax.legend(lines1 + lines2, lab1 + lab2, fontsize=8)
+            ax.legend(handles=[
+                Line2D([0], [0], color='r', marker='o', ls='', label='|' + label + '|'),
+                Line2D([0], [0], color='b', marker='o', ls='', label='∠' + label),
+            ], fontsize=8)
+
         for i in range(2):
             for j in range(2):
                 self.alphafplots[i, j].canvas.ax1.set_xscale('log')
@@ -632,10 +653,14 @@ class MainWindow(QMainWindow):
             for i in range(2):
                 self.rawplots[i, j].canvas.ax1.cla()
         t = np.arange(len(self.rSet.Data[0].data))
+        n = len(t)
         Vc = self.rSet.Data[0].Vc
         phi = -np.angle(-1j*Vc) % (2*np.pi)
-        be = int(phi/(2*np.pi*self.rSet.fsig/self.rSet.fsamp))
-        en = int(self.rSet.fsamp/self.rSet.fsig*2)+be
+        period = self.rSet.fsamp / self.rSet.fsig
+        be0 = phi / (2*np.pi) * period
+        ncycles = round((n/2 - be0) / period)
+        be = int(be0 + ncycles * period)
+        en = be + int(period * 2)
         self.rawplots[0, 0].canvas.ax1.plot(t[be:en], self.rSet.Data[0].data[be:en], 'r.')
         self.rawplots[0, 1].canvas.ax1.plot(t[be:en], self.rSet.Data[1].data[be:en], 'g.')
         self.rawplots[1, 0].canvas.ax1.plot(t[be:en], self.rSet.Data[2].data[be:en], 'b.')

@@ -14,7 +14,7 @@ class MyTabWidget(QWidget):
         self.master     = QTabWidget()
 
         self.master.resize(300, 200) 
-        self.tablabels=['setup','scatter','raw','alpha(t)','PSA','alpha(f)','eta','msg','last status']
+        self.tablabels=['setup','scatter','raw','PSA','alpha(f)','eta','msg','last status']
         self.mytabs =[]
         for l in self.tablabels:
             self.mytabs.append(QWidget())
@@ -42,20 +42,15 @@ class MyTabWidget(QWidget):
         self.mytabs[3].setLayout(glayout)
         for i in range(2):
             for j in range(2):
-                glayout.addWidget(parent.abplots[i,j],i,j)
-        glayout =  QGridLayout()
-        self.mytabs[4].setLayout(glayout)
-        for i in range(2):
-            for j in range(2):
                 glayout.addWidget(parent.psaplots[i,j],i,j)
         glayout =  QGridLayout()
-        self.mytabs[5].setLayout(glayout)
+        self.mytabs[4].setLayout(glayout)
         for i in range(2):
             for j in range(2):
                 glayout.addWidget(parent.alphafplots[i,j],i,j)
 
         glayout =  QGridLayout()
-        self.mytabs[6].setLayout(glayout)
+        self.mytabs[5].setLayout(glayout)
         for j in range(2):
             glayout.addWidget(parent.etaplots[0,j],0,j)
 

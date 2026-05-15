@@ -32,12 +32,12 @@ def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True):
     wt  = 2 * np.pi * np.arange(n) * rf
     wlf = 2 * np.pi * np.arange(n) * rlf
 
-    cols = [np.ones(n), np.cos(wt), np.sin(wt), np.cos(wlf), np.sin(wlf)]
+    cols = [np.ones(n), np.cos(wt), np.sin(wt), np.cos(wlf), np.sin(wlf), np.cos(2*wlf), np.sin(2*wlf)]
     for h in range(2, Nhars + 1):
         cols.extend([np.cos(h * wt), np.sin(h * wt)])
     X = np.column_stack(cols)
 
-    n_params = 1 + 2 * Nhars + 2  # DC + signal harmonics + line fundamental
+    n_params = 1 + 2 * Nhars + 4  # DC + signal harmonics + line fundamental + line 2nd harmonic
     ndf = n - n_params
 
     if use_hann:
@@ -50,7 +50,7 @@ def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True):
 
     fit_pars, lstsq_res, _, _ = np.linalg.lstsq(X_eff, y_eff, rcond=None)
 
-    fit_vals = X @ fit_pars
+    fit_vals = X_eff @ fit_pars
     rss = float(lstsq_res[0]) if len(lstsq_res) == 1 else float(np.sum((y_eff - X_eff @ fit_pars) ** 2))
     errv     = np.sqrt(rss / ndf) if ndf > 0 else 0.0
 

@@ -60,6 +60,11 @@ class CCC():
             self.cp[k1][k2]=button.text()
             self.save()
 
+    def setGains(self, g1, g2):
+        self.cp['MEAS']['gain1'] = str(int(g1))
+        self.cp['MEAS']['gain2'] = str(int(g2))
+        self.save()
+
     def setNrMeasBeforeVadj(self,value):
             k1='MEAS'
             k2='NrMeasBeforeVadj'
