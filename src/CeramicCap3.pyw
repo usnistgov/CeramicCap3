@@ -304,6 +304,7 @@ class MainWindow(QMainWindow):
 
 
     def onNewData(self, MyData: CustomData.NPoints):
+        old_rData = self.rData
         self.livePhasors = [[] for _ in range(4)]
         self.rData = MyData
         self.V1 = self.rData.Res['V1_balance']
@@ -325,6 +326,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.fp()
         self.replot()
+        old_rData.strip_raw()
 
     def calcVsmall(self, f, V2=-9.0, R=50):
         C42 = self.C42
@@ -407,9 +409,10 @@ class MainWindow(QMainWindow):
         if MySet.ts > 0:
             for j in range(4):
                 self.livePhasors[j].append(MySet.Data[j].Vc)
-        self.plotscatter()
         currentTab = self.tabWidget.master.tabText(self.tabWidget.master.currentIndex())
-        if currentTab != 'scatter':
+        if currentTab == 'scatter':
+            self.plotscatter()
+        elif currentTab in ('raw', 'PSA'):
             self.replot()
 
     def myprint(self, newtext):

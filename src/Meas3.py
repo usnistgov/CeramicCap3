@@ -182,6 +182,15 @@ class Meas(QObject):
             self.rawN.calc()
             self.dataReady.emit(self.rawN)
         self.finished.emit()
+        for res in (self.sg1, self.dvm):
+            try:
+                res.close()
+            except Exception:
+                pass
+        try:
+            self.rm.close()
+        except Exception:
+            pass
 
     @pyqtSlot()
     def stop(self):

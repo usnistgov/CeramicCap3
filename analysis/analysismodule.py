@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.linalg
 import sys
 import os
 sys.path.append('..')
@@ -56,20 +57,12 @@ class oneCap:
             
             
 
-            mm, c = np.polyfit(eta2, eta3, 1)
+            A = np.column_stack([eta2, np.ones(len(eta2))])
+            (mm, _c), *_ = scipy.linalg.lstsq(A, eta3, lapack_driver='gelsy')
+            g_left = 1 / mm
 
-            g_left = 1/mm#elli2.eta_cw/elli3.eta_cw
-
-
-            #y2 = elli2.semi_major/elli4.semi_major
-            #y1 = elli2.semi_minor/elli4.semi_minor
-            #x2 = elli2.semi_major
-            #x1 = elli2.semi_minor
-            #g_right = y1 -(y2-y1)/(x2-x1)*x1
-
-            mm, c = np.polyfit(eta2, eta4, 1)
-
-            g_right = 1/mm#elli2.eta_cw/elli3.eta_cw
+            (mm, c), *_ = scipy.linalg.lstsq(A, eta4, lapack_driver='gelsy')
+            g_right = 1 / mm
 
             #g_right = elli2.eta_cw/elli4.eta_cw
 

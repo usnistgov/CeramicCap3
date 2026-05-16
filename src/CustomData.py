@@ -111,9 +111,13 @@ class SampleData:
     def findf(self):
         self.fsig, self.fline = get_f(self.data, self.fsamp, self.fsig, self.fline, Nhars=self.Nhars)
         return self.fsig, self.fline
-        
+
     def fit(self):  #(y, fsamp,fsig,fline=60, use_hann=True):
         self.Vc, self.fv,errv,self.c2 = fit_sine_cplx(self.data,self.fsamp,self.fsig,self.fline,self.Nhars,True)
+
+    def strip_raw(self):
+        self.data = None
+        self.fv = None
 
 
 class FourChannels:
@@ -135,6 +139,10 @@ class FourChannels:
         for i in range(4):
             self.Data[i].setf(fsig, fline)
             self.Data[i].fit()
+
+    def strip_raw(self):
+        for sd in self.Data:
+            sd.strip_raw()
 
 class NPoints:
     def __init__(self,fsig,fsamp,Nhars=1,g1=1,g2=1,ratio=10,N=8):
@@ -221,6 +229,11 @@ class NPoints:
             np.any(~np.isfinite(np.abs(self.combined3))) or
             np.any(~np.isfinite(np.abs(self.combined4)))
         )
+
+    def strip_raw(self):
+        for fc in self.Data:
+            if isinstance(fc, FourChannels):
+                fc.strip_raw()
 
 
 class AllData():
