@@ -146,8 +146,10 @@ class completeSet:
     Assumes that the caps are sorted from smallest to largest. It can be 1,2,3,4,5 caps.
     Measurements may have different frequency sets; the intersection (rounded to nearest Hz)
     is used.
+
+    C0: reference capacitance (farads) for the first cap in the chain.
     """
-    def __init__(self,bds,fns,capvals):
+    def __init__(self, bds, fns, C0=100e-12):
         self.myCaps=[]
         for b,f in zip(bds,fns):
             self.myCaps.append(oneCap(b,f))
@@ -172,22 +174,30 @@ class completeSet:
         alpha=[]
         D =[]
         R =[]
-        alpha0=[]  # difference from 1k
+        alpha0=[]
         D0 =[]
         R0 =[]
         ix = np.argmin((self.f-1000)**2)
-        oldalpha = np.zeros(len(common))
-        oldD     = np.zeros(len(common))
+        oldcap = None
+        oldD   = None
 
-        for ana_mean,val in zip(ana_means,capvals):
-            alpha.append(ana_mean[:,9]+oldalpha)
-            D.append(ana_mean[:,10]+oldD)
-            oldalpha = np.array(alpha[-1])
-            oldD     = np.array(D[-1])
-            alpha0.append(oldalpha-oldalpha[ix])
-            D0.append(oldD-oldD[ix])
-            R.append(1/self.w/oldD/val)
-            R0.append(1/self.w/oldD/val -1/self.w/oldD[ix]/val )
+        for i, ana_mean in enumerate(ana_means):
+            col9  = ana_mean[:, 9]
+            col10 = ana_mean[:, 10]
+            if i == 0:
+                thiscap = col9 * C0
+                thisD   = col10 / 10
+            else:
+                thiscap = col9 * oldcap
+                thisD   = -col10 / 10 + oldD
+            alpha.append(thiscap)
+            D.append(thisD)
+            alpha0.append(thiscap - thiscap[ix])
+            D0.append(thisD - thisD[ix])
+            R.append(thisD / (self.w * thiscap))
+            R0.append(thisD / (self.w * thiscap) - thisD[ix] / (self.w[ix] * thiscap[ix]))
+            oldcap = thiscap
+            oldD   = thisD
         self.alpha = np.array(alpha)
         self.D = np.array(D)
         self.R = np.array(R)
