@@ -171,10 +171,10 @@ class completeSet:
 
         self.f = ana_means[0][:,0]
         self.w = 2*np.pi*self.f
-        alpha=[]
+        Cap=[]
         D =[]
         R =[]
-        alpha0=[]
+        Cap0=[]
         D0 =[]
         R0 =[]
         ix = np.argmin((self.f-1000)**2)
@@ -190,18 +190,18 @@ class completeSet:
             else:
                 thiscap = col9 * oldcap
                 thisD   = -col10 / 10 + oldD
-            alpha.append(thiscap)
+            Cap.append(thiscap)
             D.append(thisD)
-            alpha0.append(thiscap - thiscap[ix])
+            Cap0.append(thiscap - thiscap[ix])
             D0.append(thisD - thisD[ix])
             R.append(thisD / (self.w * thiscap))
             R0.append(thisD / (self.w * thiscap) - thisD[ix] / (self.w[ix] * thiscap[ix]))
             oldcap = thiscap
             oldD   = thisD
-        self.alpha = np.array(alpha)
+        self.Cap = np.array(Cap)
         self.D = np.array(D)
         self.R = np.array(R)
-        self.alpha0 = np.array(alpha0)
+        self.Cap0 = np.array(Cap0)
         self.D0 = np.array(D0)
         self.R0 = np.array(R0)
 
