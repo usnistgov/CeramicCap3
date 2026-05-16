@@ -290,23 +290,17 @@ class AllData():
 
 
     def getRawPhasors(self,f,t0=0):
-        L = len(self.mydict[f])
-        Nrows = np.shape(self.mydict[f][0].raw8)[0]  
-        Ncols = 2+2*np.shape(self.mydict[f][0].raw8)[1]   +2*np.shape(self.mydict[f][0].ctrla)[1]
-        #ret = np.empty(Nrows*L,Ncols)
-        ret =[]
-        
-        obj = self.mydict[f][-1]
-        Nrows = np.shape(obj.raw8)[0]
-        for j in range(Nrows):
-            line  = np.hstack((f,obj.Res['ts']-t0))
-            for k in range(np.shape(obj.raw8)[1]):
-                line =np.hstack((line,obj.raw8[j,k].real,obj.raw8[j,k].imag))
-            for k in range(np.shape(obj.ctrla)[1]):
-                line =np.hstack((line,obj.ctrla[j//2,k].real,obj.ctrla[j//2,k].imag))
-            ret.append(line)            
-        ret = np.array(ret)
-        return ret
+        ret = []
+        for obj in self.mydict[f]:
+            Nrows = np.shape(obj.raw8)[0]
+            for j in range(Nrows):
+                line = np.hstack((f, obj.Res['ts']-t0))
+                for k in range(np.shape(obj.raw8)[1]):
+                    line = np.hstack((line, obj.raw8[j,k].real, obj.raw8[j,k].imag))
+                for k in range(np.shape(obj.ctrla)[1]):
+                    line = np.hstack((line, obj.ctrla[j//2,k].real, obj.ctrla[j//2,k].imag))
+                ret.append(line)
+        return np.array(ret)
 
 
 
