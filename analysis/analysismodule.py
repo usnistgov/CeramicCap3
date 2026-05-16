@@ -150,16 +150,18 @@ class completeSet:
     C0: reference capacitance (farads) for the first cap in the chain.
     """
     def __init__(self, bds, fns, C0=100e-12, fmax=500000):
-        self.myCaps=[]
-        for b,f in zip(bds,fns):
-            self.myCaps.append(oneCap(b,f))
-
+        self.C0 = C0
+        self.myCaps = []
+        for b, f in zip(bds, fns):
+            self.myCaps.append(oneCap(b, f))
         self.di = self.myCaps[0].di
+        self._all_rounded = [np.round(cap.ana_mean[:,0]).astype(int) for cap in self.myCaps]
+        self.analyze(fmax)
 
-        # Find intersection of frequency sets across all caps, rounded to nearest Hz
-        rounded_freqs = [np.round(cap.ana_mean[:,0]).astype(int) for cap in self.myCaps]
-        common = rounded_freqs[0]
-        for r in rounded_freqs[1:]:
+    def analyze(self, fmax=500000):
+        self.fmax = fmax
+        common = self._all_rounded[0]
+        for r in self._all_rounded[1:]:
             common = np.intersect1d(common, r)
         common = common[common <= fmax]
 
@@ -183,12 +185,10 @@ class completeSet:
         oldcplx = None
 
         for i, ana_mean in enumerate(ana_means):
-            ratio3raw = (1 + ana_mean[:, 3] + 1j * ana_mean[:, 4]) * 10
             ratio4raw = (1 + ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
-            #gamma = 0.5 * (ratio3raw + ratio4raw)
             gamma = ratio4raw
             if i == 0:
-                thiscplx = gamma * C0
+                thiscplx = gamma * self.C0
             else:
                 thiscplx = gamma * oldcplx
             thiscap = np.real(thiscplx)
