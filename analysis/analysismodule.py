@@ -75,22 +75,22 @@ class oneCap:
 
 
             
+            ratio3raw = (g_left*elli3.eta_o-elli2.eta_o)/1000 # divide by 1000 to get rid off 000*V2/V1
+            ratio4raw = (g_right*elli4.eta_o-elli2.eta_o)/1000 # divide by 1000 to get rid off 000*V2/V1
             
-            ratio3 = (g_left*elli3.eta_o-elli2.eta_o)/1000*10-1
-            ratio4 = (g_right*elli4.eta_o-elli2.eta_o)/1000*10-1
+            ratio3 = ratio3raw/10-1  # divide by 1000 to get rid off 000*V2/V1
+            ratio4 = ratio4raw/10-1  # divide by 1000 to get rid off 000*V2/V1
 
 
-            ratio3raw = (g_left*elli3.eta_o-elli2.eta_o)
-            ratio4raw = (g_right*elli4.eta_o-elli2.eta_o)
 
             dratio = ratio4-ratio3
 
-            al_left     = -ratio3.real        # This is alpha_32 - alpha_31 ~ alpha_32
-            D_left      = ratio3.imag       # This is D_32 - D_31 ~ D_32
-            al_right    = -ratio4.real        # This is alpha_42 - alpha_41 ~ alpha_42
-            D_right     = ratio4.imag       # This is D_42 - D_41 ~ D_42
-            al_diff     = -dratio.real
-            D_diff      =  dratio.imag
+            al_left     = ratio3.real        # This is alpha_32 - alpha_31 ~ alpha_32
+            D_left      = -ratio3.imag       # This is D_32 - D_31 ~ D_32
+            al_right    = ratio4.real        # This is alpha_42 - alpha_41 ~ alpha_42
+            D_right     = -ratio4.imag       # This is D_42 - D_41 ~ D_42
+            al_diff     = dratio.real
+            D_diff      = -dratio.imag
             line = np.hstack((f, np.abs(g_left), np.angle(g_left),al_left,D_left ,np.abs(g_right) ,np.angle(g_right), al_right,D_right,
                               al_diff,D_diff,np.real(ratio4raw),np.imag(ratio4raw)))
              #                 0    1                2              3     4          5             6                    7    8
