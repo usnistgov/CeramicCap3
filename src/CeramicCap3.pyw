@@ -334,6 +334,7 @@ class MainWindow(QMainWindow):
         self.parseconfig()
         self.measuring = True
         self.buStart.setEnabled(False)
+        self.allData = CustomData.AllData()
         self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
         self.firstgood = False
