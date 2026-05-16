@@ -149,7 +149,7 @@ class completeSet:
 
     C0: reference capacitance (farads) for the first cap in the chain.
     """
-    def __init__(self, bds, fns, C0=100e-12):
+    def __init__(self, bds, fns, C0=100e-12, fmax=500000):
         self.myCaps=[]
         for b,f in zip(bds,fns):
             self.myCaps.append(oneCap(b,f))
@@ -161,6 +161,7 @@ class completeSet:
         common = rounded_freqs[0]
         for r in rounded_freqs[1:]:
             common = np.intersect1d(common, r)
+        common = common[common <= fmax]
 
         def select_rows(cap, common_hz):
             cap_rounded = np.round(cap.ana_mean[:,0]).astype(int)
@@ -182,8 +183,8 @@ class completeSet:
         oldcplx = None
 
         for i, ana_mean in enumerate(ana_means):
-            ratio3raw = (1 + ana_mean[:, 3] - 1j * ana_mean[:, 4]) * 10
-            ratio4raw = (1 + ana_mean[:, 7] - 1j * ana_mean[:, 8]) * 10
+            ratio3raw = (1 + ana_mean[:, 3] + 1j * ana_mean[:, 4]) * 10
+            ratio4raw = (1 + ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
             #gamma = 0.5 * (ratio3raw + ratio4raw)
             gamma = ratio4raw
             if i == 0:
