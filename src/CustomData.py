@@ -50,7 +50,7 @@ def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True):
 
     fit_pars, lstsq_res, _, _ = np.linalg.lstsq(X_eff, y_eff, rcond=None)
 
-    fit_vals = X_eff @ fit_pars
+    fit_vals = X @ fit_pars
     rss = float(lstsq_res[0]) if len(lstsq_res) == 1 else float(np.sum((y_eff - X_eff @ fit_pars) ** 2))
     errv     = np.sqrt(rss / ndf) if ndf > 0 else 0.0
 

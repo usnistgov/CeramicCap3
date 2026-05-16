@@ -14,6 +14,7 @@ from Meas3 import Meas, reset_instruments
 from Tabwidget import MyTabWidget
 import CustomData
 import CircuitSetup
+import ConfigEditor
 
 from PyQt5.QtCore import (
     QMutex,
@@ -142,6 +143,8 @@ class MainWindow(QMainWindow):
 
         glayout.addLayout(vlayout)
         self.circuit_setup = CircuitSetup.CircuitSetupWidget(self.config.cfgpath)
+        self.config_editor = ConfigEditor.ConfigEditor(self.config.cfgpath)
+        self.config_editor.configSaved.connect(self.parseconfig)
         self.tabWidget = MyTabWidget(self)
         glayout.addWidget(self.tabWidget)
         vlayout = QVBoxLayout()
@@ -220,7 +223,9 @@ class MainWindow(QMainWindow):
         self.fsig = self.config.fstart
         self.flist = self.config.flist
         self.dvfrac = self.config.dvfrac
-        self.nrMeas = self.config.nrMeas
+        self.nrMeas  = self.config.nrMeas
+        self.fsamp   = self.config.fsamp
+        self.nsamp   = self.config.nsamp
         self.datadir = self.config.datadir
         self.yyyymmdir   = self.config.logdir
         self.rawdatadir  = self.config.rawdatadir
@@ -335,6 +340,7 @@ class MainWindow(QMainWindow):
         self.measuring = True
         self.buStart.setEnabled(False)
         self.allData = CustomData.AllData()
+        self.runDataDir = self.ensureDir()
         self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
         self.firstgood = False
@@ -349,7 +355,7 @@ class MainWindow(QMainWindow):
             self.close()
         elif self.measuring:
             self.thread = QThread()
-            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata)
+            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp)
             self.mydvm.moveToThread(self.thread)
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
@@ -438,6 +444,8 @@ class MainWindow(QMainWindow):
             self.ploteta()
         elif tat == 'last status':
             self.showLastStatus()
+        elif tat == 'config':
+            self.config_editor.reload()
 
     def ensureDir(self):
         yymm = datetime.datetime.now().strftime('%y%m')
@@ -447,7 +455,7 @@ class MainWindow(QMainWindow):
         return bd0
 
     def saveData(self, f):
-        bd0 = self.ensureDir()
+        bd0 = self.runDataDir
         dt = datetime.datetime.fromtimestamp(self.t0)
         valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
         fn_conf = 'conf_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.ini'

@@ -14,7 +14,7 @@ class MyTabWidget(QWidget):
         self.master     = QTabWidget()
 
         self.master.resize(300, 200) 
-        self.tablabels=['setup','scatter','raw','PSA','alpha(f)','eta','msg','last status']
+        self.tablabels=['setup','scatter','raw','PSA','alpha(f)','eta','msg','last status','config']
         self.mytabs =[]
         for l in self.tablabels:
             self.mytabs.append(QWidget())
@@ -55,12 +55,16 @@ class MyTabWidget(QWidget):
             glayout.addWidget(parent.etaplots[0,j],0,j)
 
         glayout =  QGridLayout()
-        self.mytabs[-2].setLayout(glayout)
-        glayout.addWidget(parent.output,0,0)    
+        self.mytabs[6].setLayout(glayout)
+        glayout.addWidget(parent.output,0,0)
 
         glayout =  QGridLayout()
-        self.mytabs[-1].setLayout(glayout) 
-        glayout.addWidget(parent.mstatus,0,0)    
+        self.mytabs[7].setLayout(glayout)
+        glayout.addWidget(parent.mstatus,0,0)
+
+        glayout =  QGridLayout()
+        self.mytabs[8].setLayout(glayout)
+        glayout.addWidget(parent.config_editor,0,0)
 
         
 

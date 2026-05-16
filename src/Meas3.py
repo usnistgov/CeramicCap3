@@ -47,7 +47,7 @@ class Meas(QObject):
     dataSetReady = pyqtSignal(CustomData.FourChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False):
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000):
         self.bdraw = rawdatadir
         self.saverawdata = saverawdata
         super().__init__()
@@ -60,7 +60,8 @@ class Meas(QObject):
         self.Nhars = 1
         self.runt = time.time()
         self.fsig = 1000
-        self.fsamp = 800000
+        self.fsamp = fsamp
+        self.nsamp = nsamp
         self.V1_setpoints = None
         self.rm = pyvisa.ResourceManager()
         self.sg1 = self.rm.open_resource(SG1_ADDR)
@@ -77,7 +78,7 @@ class Meas(QObject):
         self.dvm.write('FORM3 REAL')
         self.dvm.write('ACQ3:VOLT 10,(@101:104)')
         self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
-        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(int(self.fsamp/10)))
+        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
         self.dvm.write('INP3:COUP AC,(@101:104)')
         self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
 
@@ -170,11 +171,14 @@ class Meas(QObject):
                 break
             self.sendtrig()
             self._stop_event.wait(1.0)  # interruptible — wakes immediately on stop()
-            self.getvals()          # always complete the read; FETCH3? waits for DVM if needed
+            try:
+                self.getvals()
+            except Exception as e:
+                self.logMessage.emit(f"Point {self.co} failed ({type(e).__name__}: {e}) — discarding set")
             if self._stop:
                 break
         self.isidle = True
-        if not self._stop:
+        if not self._stop and min(self.rawN.ats) > 0:
             self.rawN.calc()
             self.dataReady.emit(self.rawN)
         self.finished.emit()

@@ -18,7 +18,9 @@ class CCC():
         self.flist = [float(i) for i in self.meas['FREQLIST'].split(',')]
         self.fstart = float(self.meas['FSTART'])
         self.dvfrac = float(self.meas['DVFRAC'])
-        self.nrMeas=int(self.meas['MEASPERFREQ'])
+        self.nrMeas = int(self.meas['MEASPERFREQ'])
+        self.fsamp  = int(self.meas['FSAMP'])
+        self.nsamp  = int(self.meas['NSAMP'])
         self.datadir    = self.meas['DATADIR']
         self.logdir     = self.meas['LOGDIR']
         self.rawdatadir = self.meas['RAWDATADIR']
