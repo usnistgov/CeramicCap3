@@ -171,38 +171,37 @@ class completeSet:
 
         self.f = ana_means[0][:,0]
         self.w = 2*np.pi*self.f
-        Cap=[]
+        AbsCap=[]
+        RelCap=[]
         D =[]
         R =[]
-        Cap0=[]
         D0 =[]
         R0 =[]
         ix = np.argmin((self.f-1000)**2)
-        oldcap = None
-        oldD   = None
+        oldcplx = None
 
         for i, ana_mean in enumerate(ana_means):
-            col9  = ana_mean[:, 9]
-            col10 = ana_mean[:, 10]
+            ratio3raw = (1 - ana_mean[:, 3] + 1j * ana_mean[:, 4]) * 10
+            ratio4raw = (1 - ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
+            gamma = 0.5 * (ratio3raw + ratio4raw)
             if i == 0:
-                thiscap = col9 * C0
-                thisD   = col10 / 10
+                thiscplx = gamma * C0
             else:
-                thiscap = col9 * oldcap
-                thisD   = -col10 / 10 + oldD
-            Cap.append(thiscap)
+                thiscplx = gamma * oldcplx
+            thiscap = np.real(thiscplx)
+            thisD   = np.imag(thiscplx) / thiscap
+            AbsCap.append(thiscap)
+            RelCap.append(thiscap - thiscap[ix])
             D.append(thisD)
-            Cap0.append(thiscap - thiscap[ix])
             D0.append(thisD - thisD[ix])
             R.append(thisD / (self.w * thiscap))
             R0.append(thisD / (self.w * thiscap) - thisD[ix] / (self.w[ix] * thiscap[ix]))
-            oldcap = thiscap
-            oldD   = thisD
-        self.Cap = np.array(Cap)
+            oldcplx = thiscplx
+        self.AbsCap = np.array(AbsCap)
+        self.RelCap = np.array(RelCap)
         self.D = np.array(D)
-        self.R = np.array(R)
-        self.Cap0 = np.array(Cap0)
         self.D0 = np.array(D0)
+        self.R = np.array(R)
         self.R0 = np.array(R0)
 
 
