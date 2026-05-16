@@ -168,6 +168,7 @@ class completeSet:
             return cap.ana_mean[idx, :]
 
         ana_means = [select_rows(cap, common) for cap in self.myCaps]
+        self.ana_means = ana_means
 
         self.f = ana_means[0][:,0]
         self.w = 2*np.pi*self.f
@@ -181,9 +182,10 @@ class completeSet:
         oldcplx = None
 
         for i, ana_mean in enumerate(ana_means):
-            ratio3raw = (1 - ana_mean[:, 3] + 1j * ana_mean[:, 4]) * 10
-            ratio4raw = (1 - ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
-            gamma = 0.5 * (ratio3raw + ratio4raw)
+            ratio3raw = (1 + ana_mean[:, 3] - 1j * ana_mean[:, 4]) * 10
+            ratio4raw = (1 + ana_mean[:, 7] - 1j * ana_mean[:, 8]) * 10
+            #gamma = 0.5 * (ratio3raw + ratio4raw)
+            gamma = ratio4raw
             if i == 0:
                 thiscplx = gamma * C0
             else:
