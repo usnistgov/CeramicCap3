@@ -52,8 +52,10 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
         omega = 2 * np.pi * fsig
         # I4 [pA] = -V4 [V] * (j*omega*C42_pF [pA/V]) * g_right [dim]
         I4_pA = -V4 * (1j * omega * C42_pF) * g_right
-        # Fit: I4 = Y42_fit * V1 + I_bias  (V1 spans ellipse → overdetermined)
-        A_bias = np.column_stack([V1, np.ones(len(V1))])
+        # Fit: I4 = Y42_fit * (V1 + V2) + I_bias  (V1 spans ellipse → overdetermined)
+        # V1 and V2 carry their sign in the complex phasor, so the voltage across
+        # C42 is V1+V2.  Using V1 alone would let the large V2 offset corrupt I_bias.
+        A_bias = np.column_stack([V1 + V2, np.ones(len(V1))])
         I_bias_pA = np.linalg.lstsq(A_bias, I4_pA, rcond=None)[0][1]
 
         if correct_bias:
