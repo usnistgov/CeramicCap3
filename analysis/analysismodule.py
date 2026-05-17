@@ -152,13 +152,15 @@ class oneCap:
                                     fsig=f, C42_pF=C42_pF, correct_bias=correct_bias)
                 g_left, g_right = res['g_left'], res['g_right']
                 dratio = res['ratio4raw'] - res['ratio3raw']
+                ibias = res['I_bias_pA'] if res['I_bias_pA'] is not None else complex(np.nan, np.nan)
                 line = np.hstack((f,
                                   np.abs(g_left),  np.angle(g_left),
                                   res['al_left'],  res['D_left'],
                                   np.abs(g_right), np.angle(g_right),
                                   res['al_right'], res['D_right'],
                                   dratio.real, -dratio.imag,
-                                  res['ratio4raw'].real, res['ratio4raw'].imag))
+                                  res['ratio4raw'].real, res['ratio4raw'].imag,
+                                  ibias.real, ibias.imag))
                 self.ana.append(line)
 
         self.ana = np.array(self.ana)
@@ -176,6 +178,8 @@ class oneCap:
             'diff D ':        10,
             'rawratio4(re)':  11,
             'rawratio4(im)':  12,
+            'I_bias_pA(re)':  13,
+            'I_bias_pA(im)':  14,
         }
         self.ana_mean, self.ana_err = self.average(self.ana)
         self.f = self.ana_mean[:, 0]
