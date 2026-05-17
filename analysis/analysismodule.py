@@ -47,59 +47,77 @@ def analyze_block(V1, V2, V3, V4):
 
 
 class oneCap:
-    def __init__(self, bd, fn):
-        data = np.loadtxt(os.path.join(bd, fn))
-        self.ave = 0.5 * (data[0:-1:2, :] + data[1::2, :])
-        self.ana = []
+    """
+    Load and analyse one capacitor position from one or more VOLT_ data files.
+
+    bds, fns : str or list of str
+        A single base-directory + filename pair, or parallel lists of
+        base-directories and filenames.  When multiple files are given all
+        blocks at the same frequency are pooled before averaging, so the
+        resulting ana_err reflects run-to-run scatter rather than
+        within-run scatter.
+    """
+    def __init__(self, bds, fns):
+        if isinstance(bds, (str, os.PathLike)):
+            bds = [bds]
+        if isinstance(fns, (str, os.PathLike)):
+            fns = [fns]
+
+        self.ana   = []
         self.meanV1 = []
         self.elliV2 = []
         self.elliV3 = []
         self.elliV4 = []
-        self.elli2 = []
-        self.elli3 = []
-        self.elli4 = []
-        self.allf = []
-        self.aeta2 = []
-        self.aeta3 = []
-        self.aeta4 = []
-        for i in range(0, len(self.ave), 8):
-            block = self.ave[i : i + 8, :]
-            if len(block) < 8:
-                print(f"Processing final partial block of size {len(block)}")
-                break
-            f = np.mean(block[:, 0])
-            self.allf.append(f)
-            V1 = block[:, 2] + 1j * block[:, 3]
-            V2 = block[:, 4] + 1j * block[:, 5]
-            V3 = block[:, 6] + 1j * block[:, 7]
-            V4 = block[:, 8] + 1j * block[:, 9]
+        self.elli2  = []
+        self.elli3  = []
+        self.elli4  = []
+        self.allf   = []
+        self.aeta2  = []
+        self.aeta3  = []
+        self.aeta4  = []
 
-            self.meanV1.append(np.mean(V1))
-            self.elliV2.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V2))
-            self.elliV3.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V3))
-            self.elliV4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V4))
+        for bd, fn in zip(bds, fns):
+            data = np.loadtxt(os.path.join(bd, fn))
+            ave  = 0.5 * (data[0:-1:2, :] + data[1::2, :])
+            for i in range(0, len(ave), 8):
+                block = ave[i : i + 8, :]
+                if len(block) < 8:
+                    print(f"Skipping final partial block of size {len(block)} in {fn}")
+                    break
+                f  = np.mean(block[:, 0])
+                V1 = block[:, 2] + 1j * block[:, 3]
+                V2 = block[:, 4] + 1j * block[:, 5]
+                V3 = block[:, 6] + 1j * block[:, 7]
+                V4 = block[:, 8] + 1j * block[:, 9]
 
-            eta2 = 1000 * V2 / V1
-            eta3 = 1000 * V3 / V1
-            eta4 = 1000 * V4 / V1
-            self.aeta2.append(eta2)
-            self.aeta3.append(eta3)
-            self.aeta4.append(eta4)
-            self.elli2.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta2))
-            self.elli3.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta3))
-            self.elli4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4))
+                self.allf.append(f)
+                self.meanV1.append(np.mean(V1))
+                self.elliV2.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V2))
+                self.elliV3.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V3))
+                self.elliV4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(V4))
 
-            res = analyze_block(V1, V2, V3, V4)
-            g_left, g_right = res['g_left'], res['g_right']
-            dratio = res['ratio4raw'] - res['ratio3raw']
-            line = np.hstack((f,
-                              np.abs(g_left),  np.angle(g_left),
-                              res['al_left'],  res['D_left'],
-                              np.abs(g_right), np.angle(g_right),
-                              res['al_right'], res['D_right'],
-                              dratio.real, -dratio.imag,
-                              res['ratio4raw'].real, res['ratio4raw'].imag))
-            self.ana.append(line)
+                eta2 = 1000 * V2 / V1
+                eta3 = 1000 * V3 / V1
+                eta4 = 1000 * V4 / V1
+                self.aeta2.append(eta2)
+                self.aeta3.append(eta3)
+                self.aeta4.append(eta4)
+                self.elli2.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta2))
+                self.elli3.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta3))
+                self.elli4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4))
+
+                res = analyze_block(V1, V2, V3, V4)
+                g_left, g_right = res['g_left'], res['g_right']
+                dratio = res['ratio4raw'] - res['ratio3raw']
+                line = np.hstack((f,
+                                  np.abs(g_left),  np.angle(g_left),
+                                  res['al_left'],  res['D_left'],
+                                  np.abs(g_right), np.angle(g_right),
+                                  res['al_right'], res['D_right'],
+                                  dratio.real, -dratio.imag,
+                                  res['ratio4raw'].real, res['ratio4raw'].imag))
+                self.ana.append(line)
+
         self.ana = np.array(self.ana)
         self.di = {
             'f':               0,
@@ -119,7 +137,7 @@ class oneCap:
         self.ana_mean, self.ana_err = self.average(self.ana)
         self.f = self.ana_mean[:, 0]
         indices = self.f.argsort()
-        self.f = self.f[indices]
+        self.f        = self.f[indices]
         self.ana_mean = self.ana_mean[indices, :]
         self.ana_err  = self.ana_err[indices, :]
 
@@ -132,7 +150,7 @@ class oneCap:
             else:
                 mydict[f] = np.vstack((mydict[f], np.array(line)))
         means = []
-        errs = []
+        errs  = []
         for f in list(mydict):
             arr = mydict[f]
             if arr.ndim == 2:
@@ -147,11 +165,12 @@ class oneCap:
 
 class completeSet:
     """
-    Assumes that the caps are sorted from smallest to largest. It can be 1,2,3,4,5 caps.
-    Measurements may have different frequency sets; the intersection (rounded to nearest Hz)
-    is used.
+    Capacitor ladder from smallest to largest (1–5 caps).
 
-    C0: reference capacitance (farads) for the first cap in the chain.
+    Preferred constructor: completeSet.from_runs() — see its docstring.
+
+    Low-level constructor: pass parallel bds/fns lists, one element per cap.
+    Each element may be a single string or a list of strings (multiple runs).
     """
     def __init__(self, bds, fns, C0=100e-12, fmax=500000):
         self.C0 = C0
@@ -161,6 +180,60 @@ class completeSet:
         self.di = self.myCaps[0].di
         self._all_rounded = [np.round(cap.ana_mean[:, 0]).astype(int) for cap in self.myCaps]
         self.analyze(fmax)
+
+    @classmethod
+    def from_runs(cls, base, entries, C0=100e-12, ref_capval='100pF', fmax=500000):
+        """
+        Convenience constructor — builds paths from a compact entry list.
+
+        Parameters
+        ----------
+        base : str
+            Root data directory, e.g. r'U:\\...\\CAPDATA'
+        entries : list of [SN, capval, timestamp(s)]
+            SN        — serial-number string, e.g. '1840J01469'
+            capval    — cap label used in filenames, e.g. '1nF'
+            timestamp — 'YYYYMMDD_HHMM' string, or a list of such strings
+                        for multiple runs (pooled for better error bars)
+        C0        : reference capacitance in farads (default 100 pF)
+        ref_capval: label for C0 in filenames, e.g. '100pF'
+        fmax      : maximum frequency passed to analyze()
+
+        File path pattern:
+            base / SN / YYMM / DD / VOLT_{capval}-{prev_capval}_{timestamp}.dat
+
+        Examples
+        --------
+        Single run per cap:
+            completeSet.from_runs(base, [
+                ['1840J01469', '1nF',   '20260516_1414'],
+                ['2519J00896', '10nF',  '20260516_2022'],
+                ['2519J00896', '100nF', '20260515_1217'],
+            ])
+
+        Multiple runs per cap (pooled error bars):
+            completeSet.from_runs(base, [
+                ['1840J01469', '1nF',  ['20260516_1414', '20260501_1201']],
+                ['2519J00896', '10nF', ['20260516_2022', '20260501_1401',
+                                        '20260303_1533']],
+            ])
+        """
+        bds = []
+        fns = []
+        prev_capval = ref_capval
+        for sn, capval, timestamps in entries:
+            if isinstance(timestamps, str):
+                timestamps = [timestamps]
+            cap_bds, cap_fns = [], []
+            for ts in timestamps:
+                yymm = ts[2:6]   # YY+MM  e.g. '2605' from '20260516_1414'
+                dd   = ts[6:8]   # DD     e.g. '16'
+                cap_bds.append(os.path.join(base, sn, yymm, dd))
+                cap_fns.append(f'VOLT_{capval}-{prev_capval}_{ts}.dat')
+            bds.append(cap_bds)
+            fns.append(cap_fns)
+            prev_capval = capval
+        return cls(bds, fns, C0=C0, fmax=fmax)
 
     def analyze(self, fmax=500000):
         self.fmax = fmax
@@ -190,26 +263,26 @@ class completeSet:
 
         for i, (ana_mean, ana_err) in enumerate(zip(ana_means, ana_errs)):
             ratio4raw = (1 + ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
-            gamma = ratio4raw
+            gamma   = ratio4raw
             gamma_r = np.real(gamma)
             gamma_i = np.imag(gamma)
             err_gamma_r = 10 * ana_err[:, 7]
             err_gamma_i = 10 * ana_err[:, 8]
 
             if i == 0:
-                thiscplx  = gamma * self.C0
+                thiscplx   = gamma * self.C0
                 err_cplx_r = err_gamma_r * self.C0
                 err_cplx_i = err_gamma_i * self.C0
             else:
-                thiscplx   = gamma * oldcplx
+                thiscplx = gamma * oldcplx
                 old_r = np.real(oldcplx)
                 old_i = np.imag(oldcplx)
-                # error in Re(gamma * oldcplx) = Re(gamma)*Re(old) - Im(gamma)*Im(old)
+                # Re(gamma * old) = gamma_r*old_r - gamma_i*old_i
                 err_cplx_r = np.sqrt((old_r * err_gamma_r) ** 2 +
                                      (old_i * err_gamma_i) ** 2 +
                                      (gamma_r * err_old_r) ** 2 +
                                      (gamma_i * err_old_i) ** 2)
-                # error in Im(gamma * oldcplx) = Re(gamma)*Im(old) + Im(gamma)*Re(old)
+                # Im(gamma * old) = gamma_r*old_i + gamma_i*old_r
                 err_cplx_i = np.sqrt((old_i * err_gamma_r) ** 2 +
                                      (old_r * err_gamma_i) ** 2 +
                                      (gamma_i * err_old_r) ** 2 +
@@ -219,8 +292,8 @@ class completeSet:
             thisD   = np.imag(thiscplx) / thiscap
             err_thiscap = err_cplx_r
             err_thisD   = np.sqrt(err_cplx_i ** 2 + (thisD * err_thiscap) ** 2) / thiscap
-
-            err_R = np.sqrt(err_thisD ** 2 + (thisD / thiscap * err_thiscap) ** 2) / (self.w * thiscap)
+            err_R       = np.sqrt(err_thisD ** 2 +
+                                  (thisD / thiscap * err_thiscap) ** 2) / (self.w * thiscap)
 
             AbsCap.append(thiscap)
             AbsCap_err.append(err_thiscap)
@@ -235,7 +308,7 @@ class completeSet:
             R0.append(thisD / (self.w * thiscap) - thisD[ix] / (self.w[ix] * thiscap[ix]))
             R0_err.append(np.sqrt(err_R ** 2 + err_R[ix] ** 2))
 
-            oldcplx  = thiscplx
+            oldcplx   = thiscplx
             err_old_r = err_cplx_r
             err_old_i = err_cplx_i
 
