@@ -23,18 +23,21 @@ def _parse_capval_pF(s):
     raise ValueError(f"Cannot parse capacitance label: {s!r}")
 
 
-def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
+def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False,
+                  V1rb=None, V2rb=None):
     """
     Core phasor analysis for one ellipse block.
-    V1..V4: arrays of complex phasors (4 averaged or 8 raw points).
+    V1..V4 : arrays of complex phasors in the phase-rotated frame (V1 is real).
 
-    fsig     : signal frequency in Hz (required when C42_pF is given)
-    C42_pF   : nominal C42 capacitance in pF.  When supplied, I_bias_pA is
-               estimated by fitting V4 = a*V1 + b against the ellipse and
-               recovering the V4 offset due to I_bias: V4_Ibias = b − a*mean(V2).
-               I_bias_pA = -V4_Ibias * (j*omega*C42_pF) * g_right
-    correct_bias : subtract the estimated I_bias from V4 before computing the
-               final ratio.  Recommended only for 100 pF, 1 nF, maybe 10 nF.
+    fsig        : signal frequency in Hz (required when C42_pF is given)
+    C42_pF      : nominal C42 in pF.  When supplied, estimates I_bias by working
+                  in the original (unrotated) frame using the SG readbacks V1rb/V2rb.
+                  Model: V4_orig = a·V1rb + b  →  V4_Ibias = b − a·mean(V2rb).
+                  V2rb is constant across the ellipse (fixed SG output), so the
+                  cancellation is exact, unlike using the rotated DVM V2 channel.
+    V1rb, V2rb  : SG readback phasors in the original frame (cols 10-11, 12-13 of
+                  the data file).  Required for reliable I_bias estimation.
+    correct_bias: subtract the estimated I_bias from V4 before computing the ratio.
     """
     eta2 = 1000 * V2 / V1
     eta3 = 1000 * V3 / V1
@@ -50,22 +53,25 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
 
     I_bias_pA = None
     V4_Ibias   = None
-    if fsig is not None and C42_pF is not None:
+    if fsig is not None and C42_pF is not None and V1rb is not None and V2rb is not None:
         omega = 2 * np.pi * fsig
-        # Fit V4 = a*V1 + b (V1 sweeps ellipse, V2 is constant).
-        # V4_Ibias = b - a*mean(V2) is the V4 offset attributable to I_bias.
-        A_bias = np.column_stack([V1, np.ones(len(V1))])
-        params = np.linalg.lstsq(A_bias, V4, rcond=None)[0]
-        V4_Ibias = params[1] - params[0] * np.mean(V2)
-        # I_bias_pA = -V4_Ibias * j*omega*C42_pF * g_right.
-        # The factor omega*C42_pF amplifies any error in V4_Ibias by up to 1e9 at
-        # high frequencies; only convert when the estimate is meaningful (small C42,
-        # low frequency).  Above the threshold, V4_Ibias is still stored for diagnostics.
-        if omega * C42_pF < 2e6:   # ~3 kHz for 100 pF, ~300 Hz for 1 nF
+        # Work in the original (unrotated) frame.
+        # V1_data is real (|V1_SG|); the rotation factor per point is V1rb/|V1rb|.
+        rotation = V1rb / np.abs(V1rb)          # exp(+j·phi) for each ellipse point
+        V4_orig  = V4 * rotation                 # unrotate V4
+
+        # Fit V4_orig = a·V1rb + b.  V2rb ≈ const across the ellipse, so
+        # V4_Ibias = b − a·mean(V2rb) cancels the V2 drive term exactly.
+        A_bias = np.column_stack([V1rb, np.ones(len(V1rb))])
+        params = np.linalg.lstsq(A_bias, V4_orig, rcond=None)[0]
+        V4_Ibias = params[1] - params[0] * np.mean(V2rb)   # [V], original frame
+
+        if omega * C42_pF < 2e6:   # ~3 kHz/100 pF — below this I_bias/I_C42 is extractable
             I_bias_pA = -V4_Ibias * (1j * omega * C42_pF) * g_right
 
         if correct_bias:
-            V4 = V4 - V4_Ibias
+            # Subtract constant V4_Ibias in original frame, then re-rotate back
+            V4 = (V4_orig - V4_Ibias) / rotation
             eta4  = 1000 * V4 / V1
             elli4 = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4)
             g_right = 1 / scipy.linalg.lstsq(A, eta4, lapack_driver='gelsy')[0][0]
@@ -127,11 +133,14 @@ class oneCap:
                 if len(block) < 8:
                     print(f"Skipping final partial block of size {len(block)} in {fn}")
                     break
-                f  = np.mean(block[:, 0])
-                V1 = block[:, 2] + 1j * block[:, 3]
-                V2 = block[:, 4] + 1j * block[:, 5]
-                V3 = block[:, 6] + 1j * block[:, 7]
-                V4 = block[:, 8] + 1j * block[:, 9]
+                f   = np.mean(block[:, 0])
+                V1  = block[:, 2] + 1j * block[:, 3]
+                V2  = block[:, 4] + 1j * block[:, 5]
+                V3  = block[:, 6] + 1j * block[:, 7]
+                V4  = block[:, 8] + 1j * block[:, 9]
+                # SG readbacks in original (unrotated) frame — used for I_bias fit
+                V1rb = block[:, 10] + 1j * block[:, 11] if block.shape[1] > 10 else None
+                V2rb = block[:, 12] + 1j * block[:, 13] if block.shape[1] > 12 else None
 
                 self.allf.append(f)
                 self.meanV1.append(np.mean(V1))
@@ -150,7 +159,8 @@ class oneCap:
                 self.elli4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4))
 
                 res = analyze_block(V1, V2, V3, V4,
-                                    fsig=f, C42_pF=C42_pF, correct_bias=correct_bias)
+                                    fsig=f, C42_pF=C42_pF, correct_bias=correct_bias,
+                                    V1rb=V1rb, V2rb=V2rb)
                 g_left, g_right = res['g_left'], res['g_right']
                 dratio = res['ratio4raw'] - res['ratio3raw']
                 def _cplx_or_nan(v):
