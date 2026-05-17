@@ -1,4 +1,6 @@
 import os, sys, pathlib, threading
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'analysis'))
+import analysismodule
 import traceback
 import ctypes
 import datetime
@@ -182,8 +184,10 @@ class MainWindow(QMainWindow):
         widget = QWidget(self)
         widget.setLayout(QHBoxLayout())
         self.sblabel = QLabel("")
+        self.etalabel = QLabel("")
         widget.layout().addWidget(self.sblabel)
         widget.layout().addWidget(self.progressBar)
+        widget.layout().addWidget(self.etalabel)
         self.statusBar.showMessage('Welcome to CeramicCap', 5000)
         self.statusBar.addPermanentWidget(widget)
 
@@ -321,6 +325,11 @@ class MainWindow(QMainWindow):
         if self.fsig == self.fsigold:
             if self.allData.countf(self.fsig) == self.nrMeas:
                 self.saveData(self.fsig)
+                self.freqs_done += 1
+                elapsed = time.time() - self.run_start_time
+                secs_remaining = (self.total_freqs - self.freqs_done) * elapsed / self.freqs_done
+                eta = datetime.datetime.now() + datetime.timedelta(seconds=secs_remaining)
+                self.etalabel.setText(f"ETA {eta.strftime('%H:%M')}")
                 if self.fsig == self.flist[-1]:
                     self.measuring = False
                 else:
@@ -347,6 +356,14 @@ class MainWindow(QMainWindow):
         self.fsigold = -1
         self.firstgood = False
         self.progressBar.setValue(0)
+        self.run_start_time = time.time()
+        self.freqs_done = 0
+        try:
+            start_idx = self.flist.index(self.fsig)
+        except ValueError:
+            start_idx = 0
+        self.total_freqs = len(self.flist) - start_idx
+        self.etalabel.setText('')
         self.myprint("Starting frequency sweep")
         self.statusBar.showMessage('Measuring...', 0)
         self.goagain()
@@ -402,6 +419,7 @@ class MainWindow(QMainWindow):
             self.myprint("Frequency sweep complete")
             self.statusBar.showMessage('Sweep complete — press Start to measure again', 0)
             self.buStart.setEnabled(True)
+            self.etalabel.setText(f"Done {datetime.datetime.now().strftime('%H:%M:%S')}")
 
     def onNewSet(self, MySet: CustomData.FourChannels):
         self.rSet = MySet
@@ -547,11 +565,14 @@ class MainWindow(QMainWindow):
                 self.alphafplots[i, j].canvas.ax1.cla()
 
         freqs = sorted(self.allData.mydict.keys())
+        ana = {uf: [analysismodule.analyze_block(nd.V1m, nd.V2m, nd.V3m, nd.V4m)
+                    for nd in self.allData.mydict[uf]]
+               for uf in freqs}
 
-        def add_scalar(ax, getter, color):
+        def add_scalar(ax, key, color):
             f_pts, v_pts, f_bar, v_bar, e_bar = [], [], [], [], []
             for uf in freqs:
-                vals = np.array([getter(nd) for nd in self.allData.mydict[uf]], dtype=float)
+                vals = np.array([r[key] for r in ana[uf]], dtype=float)
                 if len(vals) > 2:
                     f_bar.append(uf)
                     v_bar.append(np.mean(vals))
@@ -564,20 +585,20 @@ class MainWindow(QMainWindow):
             if f_bar:
                 ax.errorbar(f_bar, v_bar, yerr=e_bar, fmt=color + 'o', capsize=3, ms=4)
 
-        add_scalar(self.alphafplots[0, 0].canvas.ax1, lambda nd: nd.Res['alpha3mean'], 'r')
-        add_scalar(self.alphafplots[0, 1].canvas.ax1, lambda nd: nd.Res['alpha4mean'], 'b')
+        add_scalar(self.alphafplots[0, 0].canvas.ax1, 'al_left',  'r')
+        add_scalar(self.alphafplots[0, 1].canvas.ax1, 'al_right', 'b')
 
         from matplotlib.lines import Line2D
-        for ax, bx, key, label in [
-            (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, 'gamma3', 'Y₃₂Z₃'),
-            (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, 'gamma4', 'Y₄₂Z₄'),
+        for ax, bx, g_key, label in [
+            (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, 'g_left',  'Y₃₂Z₃'),
+            (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, 'g_right', 'Y₄₂Z₄'),
         ]:
             ax.cla()
             bx.cla()
             f_pts, mag_pts, ang_pts = [], [], []
             f_bar, mag_bar, mag_std, ang_bar, ang_std = [], [], [], [], []
             for uf in freqs:
-                g = np.array([1.0 / nd.Res[key] for nd in self.allData.mydict[uf]], dtype=complex)
+                g = np.array([1.0 / r[g_key] for r in ana[uf]], dtype=complex)
                 mags = np.abs(g)
                 angs = np.angle(g, deg=True)
                 if len(g) > 2:
