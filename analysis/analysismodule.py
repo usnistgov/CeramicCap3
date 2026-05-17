@@ -49,15 +49,20 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
     g_right = 1 / scipy.linalg.lstsq(A, eta4, lapack_driver='gelsy')[0][0]
 
     I_bias_pA = None
+    V4_Ibias   = None
     if fsig is not None and C42_pF is not None:
         omega = 2 * np.pi * fsig
-        # Fit V4 = a*V1 + b directly (V1 varies on ellipse, V2 is constant).
-        # Intercept b = a*V2c + V4_Ibias, so V4_Ibias = b - a*mean(V2).
-        # Converting V4_Ibias to current: I_bias_pA = -V4_Ibias * j*omega*C42_pF * g_right
+        # Fit V4 = a*V1 + b (V1 sweeps ellipse, V2 is constant).
+        # V4_Ibias = b - a*mean(V2) is the V4 offset attributable to I_bias.
         A_bias = np.column_stack([V1, np.ones(len(V1))])
         params = np.linalg.lstsq(A_bias, V4, rcond=None)[0]
         V4_Ibias = params[1] - params[0] * np.mean(V2)
-        I_bias_pA = -V4_Ibias * (1j * omega * C42_pF) * g_right
+        # I_bias_pA = -V4_Ibias * j*omega*C42_pF * g_right.
+        # The factor omega*C42_pF amplifies any error in V4_Ibias by up to 1e9 at
+        # high frequencies; only convert when the estimate is meaningful (small C42,
+        # low frequency).  Above the threshold, V4_Ibias is still stored for diagnostics.
+        if omega * C42_pF < 2e6:   # ~3 kHz for 100 pF, ~300 Hz for 1 nF
+            I_bias_pA = -V4_Ibias * (1j * omega * C42_pF) * g_right
 
         if correct_bias:
             V4 = V4 - V4_Ibias
@@ -79,7 +84,8 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
         'g_right':    g_right,
         'ratio3raw':  ratio3raw,
         'ratio4raw':  ratio4raw,
-        'I_bias_pA':  I_bias_pA,
+        'I_bias_pA':  I_bias_pA,   # None above ~3 kHz/100 pF — use V4_Ibias there
+        'V4_Ibias':   V4_Ibias,    # [V] V4 offset due to I_bias, valid at all f
     }
 
 
@@ -147,7 +153,10 @@ class oneCap:
                                     fsig=f, C42_pF=C42_pF, correct_bias=correct_bias)
                 g_left, g_right = res['g_left'], res['g_right']
                 dratio = res['ratio4raw'] - res['ratio3raw']
-                ibias = res['I_bias_pA'] if res['I_bias_pA'] is not None else complex(np.nan, np.nan)
+                def _cplx_or_nan(v):
+                    return v if v is not None else complex(np.nan, np.nan)
+                ibias  = _cplx_or_nan(res['I_bias_pA'])
+                v4bias = _cplx_or_nan(res['V4_Ibias'])
                 line = np.hstack((f,
                                   np.abs(g_left),  np.angle(g_left),
                                   res['al_left'],  res['D_left'],
@@ -155,7 +164,8 @@ class oneCap:
                                   res['al_right'], res['D_right'],
                                   dratio.real, -dratio.imag,
                                   res['ratio4raw'].real, res['ratio4raw'].imag,
-                                  ibias.real, ibias.imag))
+                                  ibias.real,  ibias.imag,
+                                  v4bias.real, v4bias.imag))
                 self.ana.append(line)
 
         self.ana = np.array(self.ana)
@@ -173,8 +183,10 @@ class oneCap:
             'diff D ':        10,
             'rawratio4(re)':  11,
             'rawratio4(im)':  12,
-            'I_bias_pA(re)':  13,
+            'I_bias_pA(re)':  13,   # NaN above ~3 kHz/100 pF — too noisy there
             'I_bias_pA(im)':  14,
+            'V4_Ibias(re)':   15,   # [V] raw V4 offset; valid at all f
+            'V4_Ibias(im)':   16,
         }
         self.ana_mean, self.ana_err = self.average(self.ana)
         self.f = self.ana_mean[:, 0]
