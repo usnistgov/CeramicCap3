@@ -30,9 +30,9 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
 
     fsig     : signal frequency in Hz (required when C42_pF is given)
     C42_pF   : nominal C42 capacitance in pF.  When supplied, I_bias_pA is
-               estimated by fitting I4 = a*V1 + b against the ellipse and
-               recovering I_bias = b − a*mean(V2).
-               I4 [pA] = -V4 * (j*omega*C42_pF) * g_right
+               estimated by fitting V4 = a*V1 + b against the ellipse and
+               recovering the V4 offset due to I_bias: V4_Ibias = b − a*mean(V2).
+               I_bias_pA = -V4_Ibias * (j*omega*C42_pF) * g_right
     correct_bias : subtract the estimated I_bias from V4 before computing the
                final ratio.  Recommended only for 100 pF, 1 nF, maybe 10 nF.
     """
@@ -51,21 +51,16 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False):
     I_bias_pA = None
     if fsig is not None and C42_pF is not None:
         omega = 2 * np.pi * fsig
-        # I4 [pA] = -V4 [V] * (j*omega*C42_pF [pA/V]) * g_right [dim]
-        I4_pA = -V4 * (1j * omega * C42_pF) * g_right
-        # V2 is nearly constant across the ellipse; V1 carries all the variation.
-        # Fitting [V1+V2, 1] is ill-conditioned: the large constant V2 offset
-        # makes the intercept absorb j*ω*C42*V2c instead of I_bias.
-        # Fix: fit I4 = a*V1 + b, then I_bias = b − a*mean(V2).
+        # Fit V4 = a*V1 + b directly (V1 varies on ellipse, V2 is constant).
+        # Intercept b = a*V2c + V4_Ibias, so V4_Ibias = b - a*mean(V2).
+        # Converting V4_Ibias to current: I_bias_pA = -V4_Ibias * j*omega*C42_pF * g_right
         A_bias = np.column_stack([V1, np.ones(len(V1))])
-        params = np.linalg.lstsq(A_bias, I4_pA, rcond=None)[0]
-        I_bias_pA = params[1] - params[0] * np.mean(V2)
+        params = np.linalg.lstsq(A_bias, V4, rcond=None)[0]
+        V4_Ibias = params[1] - params[0] * np.mean(V2)
+        I_bias_pA = -V4_Ibias * (1j * omega * C42_pF) * g_right
 
         if correct_bias:
-            # V4_correction [V] = I_bias [A] * Z4 [Ω]
-            #   Z4 = 1 / (j*omega*C42_pF*1e-12 * g_right)
-            # => correction = I_bias_pA [pA] / (j*omega*C42_pF * g_right)  [V]
-            V4 = V4 + I_bias_pA / (1j * omega * C42_pF * g_right)
+            V4 = V4 - V4_Ibias
             eta4  = 1000 * V4 / V1
             elli4 = R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4)
             g_right = 1 / scipy.linalg.lstsq(A, eta4, lapack_driver='gelsy')[0][0]
@@ -314,7 +309,9 @@ class completeSet:
         AbsCap_err, RelCap_err, D_err, D0_err, R_err, R0_err = [], [], [], [], [], []
 
         for i, (ana_mean, ana_err) in enumerate(zip(ana_means, ana_errs)):
-            ratio4raw = (1 + ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
+            # col 7 = al_right = ratio4.real, col 8 = D_right = -ratio4.imag
+            # so gamma.imag must use -D_right to get back +ratio4.imag
+            ratio4raw = (1 + ana_mean[:, 7] - 1j * ana_mean[:, 8]) * 10
             gamma   = ratio4raw
             gamma_r = np.real(gamma)
             gamma_i = np.imag(gamma)
