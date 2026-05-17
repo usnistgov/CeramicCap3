@@ -116,11 +116,12 @@ class oneCap:
             'rawratio4(re)':  11,
             'rawratio4(im)':  12,
         }
-        self.ana_mean, self.ana_std = self.average(self.ana)
+        self.ana_mean, self.ana_err = self.average(self.ana)
         self.f = self.ana_mean[:, 0]
         indices = self.f.argsort()
         self.f = self.f[indices]
         self.ana_mean = self.ana_mean[indices, :]
+        self.ana_err  = self.ana_err[indices, :]
 
     def average(self, output):
         mydict = {}
@@ -131,15 +132,17 @@ class oneCap:
             else:
                 mydict[f] = np.vstack((mydict[f], np.array(line)))
         means = []
-        stds = []
+        errs = []
         for f in list(mydict):
-            if len(np.shape(mydict[f][1])) == 1:
-                means.append(np.median(mydict[f], axis=0))
-                stds.append(np.std(mydict[f], axis=0, ddof=1))
+            arr = mydict[f]
+            if arr.ndim == 2:
+                N = arr.shape[0]
+                means.append(np.median(arr, axis=0))
+                errs.append(np.std(arr, axis=0, ddof=1) / np.sqrt(N))
             else:
-                means.append(np.array(mydict[f]))
-                stds.append(np.zeros_like(mydict[f]))
-        return np.array(means), np.array(stds)
+                means.append(arr)
+                errs.append(np.zeros_like(arr))
+        return np.array(means), np.array(errs)
 
 
 class completeSet:
@@ -169,33 +172,82 @@ class completeSet:
         def select_rows(cap, common_hz):
             cap_rounded = np.round(cap.ana_mean[:, 0]).astype(int)
             idx = [np.where(cap_rounded == f)[0][0] for f in common_hz]
-            return cap.ana_mean[idx, :]
+            return cap.ana_mean[idx, :], cap.ana_err[idx, :]
 
-        ana_means = [select_rows(cap, common) for cap in self.myCaps]
+        ana_data  = [select_rows(cap, common) for cap in self.myCaps]
+        ana_means = [d[0] for d in ana_data]
+        ana_errs  = [d[1] for d in ana_data]
         self.ana_means = ana_means
 
         self.f = ana_means[0][:, 0]
         self.w = 2 * np.pi * self.f
         ix = np.argmin((self.f - 1000) ** 2)
         oldcplx = None
+        err_old_r = err_old_i = None
 
         AbsCap, RelCap, D, D0, R, R0 = [], [], [], [], [], []
-        for i, ana_mean in enumerate(ana_means):
+        AbsCap_err, RelCap_err, D_err, D0_err, R_err, R0_err = [], [], [], [], [], []
+
+        for i, (ana_mean, ana_err) in enumerate(zip(ana_means, ana_errs)):
             ratio4raw = (1 + ana_mean[:, 7] + 1j * ana_mean[:, 8]) * 10
             gamma = ratio4raw
-            thiscplx = gamma * self.C0 if i == 0 else gamma * oldcplx
+            gamma_r = np.real(gamma)
+            gamma_i = np.imag(gamma)
+            err_gamma_r = 10 * ana_err[:, 7]
+            err_gamma_i = 10 * ana_err[:, 8]
+
+            if i == 0:
+                thiscplx  = gamma * self.C0
+                err_cplx_r = err_gamma_r * self.C0
+                err_cplx_i = err_gamma_i * self.C0
+            else:
+                thiscplx   = gamma * oldcplx
+                old_r = np.real(oldcplx)
+                old_i = np.imag(oldcplx)
+                # error in Re(gamma * oldcplx) = Re(gamma)*Re(old) - Im(gamma)*Im(old)
+                err_cplx_r = np.sqrt((old_r * err_gamma_r) ** 2 +
+                                     (old_i * err_gamma_i) ** 2 +
+                                     (gamma_r * err_old_r) ** 2 +
+                                     (gamma_i * err_old_i) ** 2)
+                # error in Im(gamma * oldcplx) = Re(gamma)*Im(old) + Im(gamma)*Re(old)
+                err_cplx_i = np.sqrt((old_i * err_gamma_r) ** 2 +
+                                     (old_r * err_gamma_i) ** 2 +
+                                     (gamma_i * err_old_r) ** 2 +
+                                     (gamma_r * err_old_i) ** 2)
+
             thiscap = np.real(thiscplx)
             thisD   = np.imag(thiscplx) / thiscap
+            err_thiscap = err_cplx_r
+            err_thisD   = np.sqrt(err_cplx_i ** 2 + (thisD * err_thiscap) ** 2) / thiscap
+
+            err_R = np.sqrt(err_thisD ** 2 + (thisD / thiscap * err_thiscap) ** 2) / (self.w * thiscap)
+
             AbsCap.append(thiscap)
+            AbsCap_err.append(err_thiscap)
             RelCap.append(thiscap - thiscap[ix])
+            RelCap_err.append(np.sqrt(err_thiscap ** 2 + err_thiscap[ix] ** 2))
             D.append(thisD)
+            D_err.append(err_thisD)
             D0.append(thisD - thisD[ix])
+            D0_err.append(np.sqrt(err_thisD ** 2 + err_thisD[ix] ** 2))
             R.append(thisD / (self.w * thiscap))
+            R_err.append(err_R)
             R0.append(thisD / (self.w * thiscap) - thisD[ix] / (self.w[ix] * thiscap[ix]))
-            oldcplx = thiscplx
-        self.AbsCap = np.array(AbsCap)
-        self.RelCap = np.array(RelCap)
-        self.D = np.array(D)
-        self.D0 = np.array(D0)
-        self.R = np.array(R)
-        self.R0 = np.array(R0)
+            R0_err.append(np.sqrt(err_R ** 2 + err_R[ix] ** 2))
+
+            oldcplx  = thiscplx
+            err_old_r = err_cplx_r
+            err_old_i = err_cplx_i
+
+        self.AbsCap     = np.array(AbsCap)
+        self.RelCap     = np.array(RelCap)
+        self.D          = np.array(D)
+        self.D0         = np.array(D0)
+        self.R          = np.array(R)
+        self.R0         = np.array(R0)
+        self.AbsCap_err = np.array(AbsCap_err)
+        self.RelCap_err = np.array(RelCap_err)
+        self.D_err      = np.array(D_err)
+        self.D0_err     = np.array(D0_err)
+        self.R_err      = np.array(R_err)
+        self.R0_err     = np.array(R0_err)
