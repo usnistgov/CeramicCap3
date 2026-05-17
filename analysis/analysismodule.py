@@ -136,10 +136,10 @@ class oneCap:
         for f in list(mydict):
             arr = mydict[f]
             if arr.ndim == 2:
-                N = arr.shape[0]
                 means.append(np.median(arr, axis=0))
-                errs.append(np.std(arr, axis=0, ddof=1) / np.sqrt(N))
+                errs.append(np.std(arr, axis=0, ddof=1))
             else:
+                # N=1: no spread estimable
                 means.append(arr)
                 errs.append(np.zeros_like(arr))
         return np.array(means), np.array(errs)
