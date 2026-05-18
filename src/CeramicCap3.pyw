@@ -477,7 +477,7 @@ class MainWindow(QMainWindow):
 
     def saveData(self, f):
         bd0 = self.runDataDir
-        dt = datetime.datetime.fromtimestamp(self.t0)
+        dt = datetime.datetime.fromtimestamp(self.run_start_time)
         valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
         fn_conf = 'conf_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.ini'
         if not os.path.exists(os.path.join(bd0, fn_conf)):
@@ -510,7 +510,7 @@ class MainWindow(QMainWindow):
                         o += '{0:12.9f} '.format(a)
                 o += '\n'
                 file.write(o)
-        C = self.allData.getRawPhasors(f, self.t0)
+        C = self.allData.getRawPhasors(f, self.run_start_time)
         fn = 'VOLT_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:

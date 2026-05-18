@@ -360,7 +360,7 @@ class completeSet:
                                      (gamma_r * err_old_i) ** 2)
 
             thiscap = np.real(thiscplx)
-            thisD   = np.imag(thiscplx) / thiscap
+            thisD   = -np.imag(thiscplx) / thiscap   # Im(C) < 0 for positive D (C·(1-jD) convention)
             err_thiscap = err_cplx_r
             err_thisD   = np.sqrt(err_cplx_i ** 2 + (thisD * err_thiscap) ** 2) / thiscap
             err_R       = np.sqrt(err_thisD ** 2 +
