@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
         self.mutex = mutex
         self.t0 = time.time()
         self.Npts = 8
-        self.ver = 3.0
+        self.ver = 'unknown'
         self.quit = False
         self.measuring = False
         self.loopfinished = False
@@ -86,8 +86,8 @@ class MainWindow(QMainWindow):
         self.rSet = CustomData.FourChannels(1000, 800000, 2, [], [], [], [], 0, 0, 0, ts=-1)
         self.livePhasors = [[] for _ in range(4)]
         self.allData = CustomData.AllData()
-        self.myprint(f"Welcome to Version {self.ver}")
         self.parseconfig()
+        self.myprint(f"Welcome to CeramicCap v{self.ver}")
 
         self.scatterplots = np.empty((2, 2), dtype=object)
         for i in range(2):
@@ -249,6 +249,11 @@ class MainWindow(QMainWindow):
         self.rawdatadir  = self.config.rawdatadir
         self.saverawdata = self.config.saverawdata
         self.nwarmup = self.config.nwarmup
+        self.fixg1 = self.config.fixg1
+        self.fixg2 = self.config.fixg2
+        self.fixed_g1 = R2FMath.mingainvalue1(self.flist, self.C31, self.dV) if self.fixg1 else None
+        self.fixed_g2 = R2FMath.mingainvalue2(self.flist, self.C41) if self.fixg2 else None
+        self.ver = self.config.version
         global _logdir
         _logdir = self.config.logdir
 
@@ -348,8 +353,11 @@ class MainWindow(QMainWindow):
             self.warmup_count += 1
             if self.warmup_count > self.nwarmup:
                 self.allData.append(self.rData)
-        self.sblabel.setText("{0}/{1} good measurements at {2:5.2f} kHz".format(
-            self.allData.countf(self.fsig), self.nrMeas, self.fsig/1000))
+        if self.warmup_count <= self.nwarmup:
+            self.sblabel.setText(f"warmup {self.warmup_count}/{self.nwarmup} at {self.fsig/1000:5.2f} kHz")
+        else:
+            self.sblabel.setText("{0}/{1} good measurements at {2:5.2f} kHz".format(
+                self.allData.countf(self.fsig), self.nrMeas, self.fsig/1000))
         if self.fsig == self.fsigold:
             if self.allData.countf(self.fsig) == self.nrMeas:
                 self.saveData(self.fsig)
@@ -419,9 +427,8 @@ class MainWindow(QMainWindow):
                     self.V2 = self.V2*0.9
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
             else:
-                self.g1 = R2FMath.newgainvalue1(self.fsig, self.C31, self.C41)
-                #self.g1 = R2FMath.newgainvalue1(self.fsig, self.C31, 1e-6)
-                self.g2 = R2FMath.newgainvalue2(self.fsig, self.C41)
+                self.g1 = self.fixed_g1 if self.fixg1 else R2FMath.newgainvalue1(self.fsig, self.C31, self.dV)
+                self.g2 = self.fixed_g2 if self.fixg2 else R2FMath.newgainvalue2(self.fsig, self.C41)
                 #self.g1 = 1
                 #self.g2 = 1
                 self.myprint('pick gains {0} {1}'.format(self.g1, self.g2))
@@ -430,7 +437,7 @@ class MainWindow(QMainWindow):
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
                 self.warmup_count = 0
-                self.sblabel.setText(f"first measurement at {self.fsig/1000:5.2f} kHz")
+                self.sblabel.setText(f"warming up at {self.fsig/1000:5.2f} kHz")
                 self.meta_V1rb = []
                 self.meta_eta4 = []
                 self.V2 = -9.9+0j
@@ -610,7 +617,9 @@ class MainWindow(QMainWindow):
             return
         for i in range(2):
             for j in range(2):
-                self.alphafplots[i, j].canvas.ax1.cla()
+                ax = self.alphafplots[i, j].canvas.ax1
+                ax.set_xscale('linear')
+                ax.cla()
 
         freqs = sorted(self.allData.mydict.keys())
         ana = {uf: [analysismodule.analyze_block(nd.V1m, nd.V2m, nd.V3m, nd.V4m)
@@ -641,6 +650,7 @@ class MainWindow(QMainWindow):
             (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, 'g_left',  'Y₃₂Z₃'),
             (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, 'g_right', 'Y₄₂Z₄'),
         ]:
+            ax.set_xscale('linear')
             ax.cla()
             bx.cla()
             f_pts, mag_pts, ang_pts = [], [], []
@@ -773,12 +783,14 @@ class MainWindow(QMainWindow):
             params, _, _, _ = np.linalg.lstsq(A, np.concatenate([er, ei]), rcond=None)
             a, b, cr, ci = params
             xr_best, xi_best = V1rb_best.real, V1rb_best.imag
-            xr_line = np.linspace(xr.min(), xr.max(), 50)
-            xi_line = np.linspace(xi.min(), xi.max(), 50)
-            axs[0][0].plot(xr_line, a * (xr_line - xr_mean) + cr, 'b-')
-            axs[0][1].plot(xi_line, -b * (xi_line - xi_mean) + cr, 'b-')
-            axs[1][0].plot(xr_line, b * (xr_line - xr_mean) + ci, 'b-')
-            axs[1][1].plot(xi_line, a * (xi_line - xi_mean) + ci, 'b-')
+            er_fit = a * (xr - xr_mean) - b * (xi - xi_mean) + cr
+            ei_fit = b * (xr - xr_mean) + a * (xi - xi_mean) + ci
+            idx_r = np.argsort(xr)
+            idx_i = np.argsort(xi)
+            axs[0][0].plot(xr[idx_r], er_fit[idx_r], 'b-')
+            axs[0][1].plot(xi[idx_i], er_fit[idx_i], 'b-')
+            axs[1][0].plot(xr[idx_r], ei_fit[idx_r], 'b-')
+            axs[1][1].plot(xi[idx_i], ei_fit[idx_i], 'b-')
             for ax in [axs[0][0], axs[1][0]]:
                 ax.axvline(xr_best, color='r', linestyle='--')
             for ax in [axs[0][1], axs[1][1]]:

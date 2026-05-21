@@ -26,6 +26,9 @@ class CCC():
         self.rawdatadir = self.meas['RAWDATADIR']
         self.saverawdata = self.cp['MEAS'].getboolean('saverawdata', fallback=False)
         self.nwarmup = int(self.meas.get('NWARMUP', '2'))
+        self.fixg1 = self.cp['MEAS'].getboolean('fixg1', fallback=False)
+        self.fixg2 = self.cp['MEAS'].getboolean('fixg2', fallback=False)
+        self.version = self.meas.get('VERSION', 'unknown')
 
         k1='CONFIG'
         for k2 in list(self.cp[k1].keys()):

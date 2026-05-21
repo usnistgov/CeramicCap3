@@ -111,22 +111,33 @@ def lp(f,f0=2e4,Q=0.5):
     ret = f0*f0/(f0*f0-f*f+f0/Q*1j*f)
     return ret
 
-def newgainvalue2(f,C41):
-    V1 = calcV1(f,C41,C41/10)
-    dI1 = calcI1(f,C41,V1*1e-2,R=50)
-    gain=10**np.round(np.log10(0.1/np.abs(dI1*1e3*lp(f))))
-    if gain<1: gain=1
-    if gain>100000: gain =100000
+def newgainvalue2(f, C41, dV=0.01, Vmax=0.1):
+    # dV: expected voltage perturbation at the DUT node [V] (from config); default 0.01 V = 1% of nominal 1 V excitation
+    # Vmax: target amplifier output voltage [V]; default 0.1 V keeps well inside the ±10 V output range
+    # Returns the nearest power-of-10 transimpedance gain (hardware range 1..100000, base 1e3 V/A)
+    dI1 = calcI1(f, C41, dV, R=50)
+    gain = 10**np.round(np.log10(Vmax/np.abs(dI1*1e3*lp(f))))
+    if gain < 1: gain = 1
+    if gain > 100000: gain = 100000
     return gain
 
-def newgainvalue1(f,C31,C41):
-    V1 = calcV1(f,C41,C41/10)
-    dI1 = calcI1(f,C31,V1*1e-2,R=50)
-    gain=10**np.round(np.log10(0.1/np.abs(dI1*1e3*lp(f))))
-    if gain<1: gain=1
-    if gain>100000: gain =100000
+def newgainvalue1(f, C31, dV=0.01, Vmax=0.1):
+    # dV: expected voltage perturbation at the DUT node [V] (from config); default 0.01 V = 1% of nominal 1 V excitation
+    # Vmax: target amplifier output voltage [V]; default 0.1 V keeps well inside the ±10 V output range
+    # Returns the nearest power-of-10 transimpedance gain (hardware range 1..100000, base 1e3 V/A)
+    # C31 is the sample capacitor whose current is measured; C41 no longer needed since dV is supplied directly
+    dI1 = calcI1(f, C31, dV, R=50)
+    gain = 10**np.round(np.log10(Vmax/np.abs(dI1*1e3*lp(f))))
+    if gain < 1: gain = 1
+    if gain > 100000: gain = 100000
     return gain
 
+
+def mingainvalue1(flist, C31, dV=0.01, Vmax=0.1):
+    return min(newgainvalue1(f, C31, dV, Vmax) for f in flist)
+
+def mingainvalue2(flist, C41):
+    return min(newgainvalue2(f, C41) for f in flist)
 
 def mycomplexfit(x,y):
     L = len(x)
