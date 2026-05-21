@@ -201,12 +201,23 @@ class NPoints:
         N2 = self.N // 2
         V4_raw = np.array([0.5*(self.Data[2*k].Data[3].Vc + self.Data[2*k+1].Data[3].Vc)
                            for k in range(N2)])
+        V1_meas = np.array([0.5*(self.Data[2*k].Data[0].Vc + self.Data[2*k+1].Data[0].Vc)
+                            for k in range(N2)])
+        eta4 = V4_raw / V1_meas
         V1rb_pts = self.ctrla[:, 0]
-        Xmat = np.column_stack([V1rb_pts, np.ones(N2)])
-        (m_bal, c_bal), _, _, _ = np.linalg.lstsq(Xmat, V4_raw, rcond=None)
-        self.Res['V4fit_slope'] = m_bal
-        self.Res['V4fit_intercept'] = c_bal
-        self.Res['V1_balance'] = -c_bal / m_bal
+        V1rb_center = np.mean(V1rb_pts)
+        Xmat = np.column_stack([V1rb_pts - V1rb_center, np.ones(N2)])
+        (m_bal, c_bal), _, _, _ = np.linalg.lstsq(Xmat, eta4, rcond=None)
+        step = c_bal / m_bal
+        dV1_spread = np.std(V1rb_pts)
+        step_limit = 5 * dV1_spread
+        if np.abs(step) > step_limit:
+            step = step * step_limit / np.abs(step)
+        self.Res['eta4fit_slope'] = m_bal
+        self.Res['eta4fit_intercept'] = c_bal
+        self.Res['eta4_mean'] = np.mean(eta4)
+        self.Res['V1rb_center'] = V1rb_center
+        self.Res['V1_balance'] = V1rb_center - 0.5 * step
 
         self.combined3 = self.gamma3 * self.eta3 - self.eta2
         self.combined4 = self.gamma4 * self.eta4 - self.eta2

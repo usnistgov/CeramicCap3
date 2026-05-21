@@ -25,6 +25,7 @@ class CCC():
         self.logdir     = self.meas['LOGDIR']
         self.rawdatadir = self.meas['RAWDATADIR']
         self.saverawdata = self.cp['MEAS'].getboolean('saverawdata', fallback=False)
+        self.nwarmup = int(self.meas.get('NWARMUP', '2'))
 
         k1='CONFIG'
         for k2 in list(self.cp[k1].keys()):

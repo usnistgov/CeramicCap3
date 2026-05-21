@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         self.g2 = 100
         self.tza1.set_fgain(self.g1)
         self.tza2.set_fgain(self.g2)
-        self.firstgood = False
+        self.warmup_count = 0
 
         self.fsigold = -1
         self.rData = CustomData.NPoints(1000, 800000)
@@ -113,6 +113,14 @@ class MainWindow(QMainWindow):
         for j in range(2):
             self.etaplots[0, j] = mplwidget.MplWidget(rightax=False)
 
+        self.balanceplots = np.empty((2, 2), dtype=object)
+        for i in range(2):
+            for j in range(2):
+                self.balanceplots[i, j] = mplwidget.MplWidget(rightax=False)
+                self.balanceplots[i, j].setfmt('%.4f', '%.5f')
+        self.meta_V1rb = []
+        self.meta_eta4 = []
+
         self.output = QTextEdit(self)
         self.output.resize(540, 200)
         self.output.setReadOnly(True)
@@ -126,10 +134,12 @@ class MainWindow(QMainWindow):
         vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Fixed))
 
         self.buStart = QPushButton("Start")
+        self.buStop  = QPushButton("Stop")
         self.buQuit = QPushButton("Quit")
         self.bufp = QPushButton("f++")
         self.bufm = QPushButton("f--")
         vlayout.addWidget(self.buStart)
+        vlayout.addWidget(self.buStop)
         vlayout.addWidget(self.buQuit)
         vlayout.addWidget(self.bufp)
         vlayout.addWidget(self.bufm)
@@ -193,6 +203,8 @@ class MainWindow(QMainWindow):
         self.statusBar.addPermanentWidget(widget)
 
         self.buStart.clicked.connect(self.startMeas)
+        self.buStop.clicked.connect(self.stopMeas)
+        self.buStop.setEnabled(False)
         self.buQuit.clicked.connect(self.finishUp)
         self.bufp.clicked.connect(self.fp)
         self.bufm.clicked.connect(self.fm)
@@ -225,8 +237,9 @@ class MainWindow(QMainWindow):
 
         self.myprint("S/N: {0} {1} {2} {3}".format(self.SN31, self.SN32, self.SN41, self.SN42))
 
-        self.fsig = self.config.fstart
         self.flist = self.config.flist
+        if not self.measuring:
+            self.fsig = self.config.fstart
         self.dvfrac = self.config.dvfrac
         self.nrMeas  = self.config.nrMeas
         self.fsamp   = self.config.fsamp
@@ -235,6 +248,7 @@ class MainWindow(QMainWindow):
         self.yyyymmdir   = self.config.logdir
         self.rawdatadir  = self.config.rawdatadir
         self.saverawdata = self.config.saverawdata
+        self.nwarmup = self.config.nwarmup
         global _logdir
         _logdir = self.config.logdir
 
@@ -284,6 +298,14 @@ class MainWindow(QMainWindow):
             self.tza2.set_hgain(button.text())
             self.g2 = self.tza2.text_to_gain(button.text())
 
+    def stopMeas(self):
+        if not self.measuring:
+            return
+        self.measuring = False
+        self.myprint("Stop requested — waiting for current point to finish")
+        self.statusBar.showMessage('Stopping...', 0)
+        self.stopDVM.emit()
+
     def finishUp(self):
         if not self.measuring:
             self.close()
@@ -313,14 +335,19 @@ class MainWindow(QMainWindow):
         self.livePhasors = [[] for _ in range(4)]
         self.rData = MyData
         self.V1 = self.rData.Res['V1_balance']
-        m = self.rData.Res['V4fit_slope']
-        c = self.rData.Res['V4fit_intercept']
-        self.myprint(f"V4 fit: slope={m:.5f}  intercept={c:.5f}  V1_balance={self.V1:.5f}")
+        m   = self.rData.Res['eta4fit_slope']
+        v4m = self.rData.Res['eta4_mean']
+        self.myprint(f"eta4 fit: slope={m:.5f}  eta4_mean={v4m:.5f}  V1_balance={self.V1:.5f}")
+        self.meta_V1rb.append(self.rData.Res['V1rb_center'])
+        self.meta_eta4.append(self.rData.Res['eta4_mean'])
+        V1rb_best = self.calc_V1rb_best()
+        if V1rb_best is not None:
+            self.V1 = V1rb_best
+            self.myprint(f"Overriding V1 with V1rb_best={V1rb_best:.5f}")
         if self.rData.goodData:
-            if self.firstgood:
+            self.warmup_count += 1
+            if self.warmup_count > self.nwarmup:
                 self.allData.append(self.rData)
-            else:
-                self.firstgood = True
         self.sblabel.setText("{0}/{1} good measurements at {2:5.2f} kHz".format(
             self.allData.countf(self.fsig), self.nrMeas, self.fsig/1000))
         if self.fsig == self.fsigold:
@@ -355,11 +382,14 @@ class MainWindow(QMainWindow):
         self.parseconfig()
         self.measuring = True
         self.buStart.setEnabled(False)
+        self.buStop.setEnabled(True)
         self.allData = CustomData.AllData()
         self.runDataDir = self.ensureDir()
+        self.meta_V1rb = []
+        self.meta_eta4 = []
         self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
-        self.firstgood = False
+        self.warmup_count = 0
         self.progressBar.setValue(0)
         self.run_start_time = time.time()
         self.freqs_done = 0
@@ -399,7 +429,10 @@ class MainWindow(QMainWindow):
                 self.tza1.set_fgain(self.g1)
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
-                self.firstgood = False
+                self.warmup_count = 0
+                self.sblabel.setText(f"first measurement at {self.fsig/1000:5.2f} kHz")
+                self.meta_V1rb = []
+                self.meta_eta4 = []
                 self.V2 = -9.9+0j
                 self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
                 while np.abs(self.V1) > 9:
@@ -421,9 +454,12 @@ class MainWindow(QMainWindow):
             self.thread.start()
             self.fsigold = self.fsig
         else:
-            self.myprint("Frequency sweep complete")
-            self.statusBar.showMessage('Sweep complete — press Start to measure again', 0)
+            stopped = not self.measuring
+            self.myprint("Stopped" if stopped else "Frequency sweep complete")
+            self.statusBar.showMessage('Stopped — press Start to measure again' if stopped
+                                       else 'Sweep complete — press Start to measure again', 0)
             self.buStart.setEnabled(True)
+            self.buStop.setEnabled(False)
             self.etalabel.setText(f"Done {datetime.datetime.now().strftime('%H:%M:%S')}")
 
     def onNewSet(self, MySet: CustomData.FourChannels):
@@ -456,6 +492,9 @@ class MainWindow(QMainWindow):
     def replot(self):
         currentIndex = self.tabWidget.master.currentIndex()
         tat = self.tabWidget.master.tabText(currentIndex)
+        if getattr(self, '_prev_tab', None) == 'config' and tat != 'config':
+            self.config_editor.save()
+        self._prev_tab = tat
         if tat == 'scatter':
             self.plotscatter()
         elif tat == 'msg':
@@ -468,6 +507,8 @@ class MainWindow(QMainWindow):
             self.plotalphaf()
         elif tat == 'eta':
             self.ploteta()
+        elif tat == 'V1bal':
+            self.plotbalance()
         elif tat == 'last status':
             self.showLastStatus()
         elif tat == 'config':
@@ -664,6 +705,91 @@ class MainWindow(QMainWindow):
         ax4.set_ylabel('Im(γ₄η₄ − η₂) × 10⁶')
         for j in range(2):
             self.etaplots[0, j].canvas.draw()
+
+    def calc_V1rb_best(self):
+        if len(self.meta_V1rb) < 3:
+            return None
+        V1rb = np.array(self.meta_V1rb[-6:])
+        eta4 = np.array(self.meta_eta4[-6:])
+        xr, xi = V1rb.real, V1rb.imag
+        er, ei = eta4.real, eta4.imag
+        xr_mean, xi_mean = np.mean(xr), np.mean(xi)
+        dxr, dxi = xr - xr_mean, xi - xi_mean
+        N = len(xr)
+        A = np.block([
+            [np.column_stack([dxr, -dxi, np.ones(N), np.zeros(N)])],
+            [np.column_stack([dxi,  dxr, np.zeros(N), np.ones(N)])]
+        ])
+        params, _, _, _ = np.linalg.lstsq(A, np.concatenate([er, ei]), rcond=None)
+        a, b, cr, ci = params
+        m_meta = a + 1j * b
+        c_meta = cr + 1j * ci
+        return (xr_mean + 1j * xi_mean) - c_meta / m_meta
+
+    def plotbalance(self):
+        for i in range(2):
+            for j in range(2):
+                self.balanceplots[i, j].canvas.ax1.cla()
+        if not self.meta_V1rb:
+            for i in range(2):
+                for j in range(2):
+                    self.balanceplots[i, j].canvas.draw()
+            return
+        V1rb = np.array(self.meta_V1rb[-6:])
+        eta4 = np.array(self.meta_eta4[-6:])
+        xr, xi = V1rb.real, V1rb.imag
+        er, ei = eta4.real, eta4.imag
+        axs = [[self.balanceplots[i, j].canvas.ax1 for j in range(2)] for i in range(2)]
+        axs[0][0].set_xlabel('Re(V1rb)')
+        axs[0][0].set_ylabel('Re(η₄)')
+        axs[0][1].set_xlabel('Im(V1rb)')
+        axs[0][1].set_ylabel('Re(η₄)')
+        axs[1][0].set_xlabel('Re(V1rb)')
+        axs[1][0].set_ylabel('Im(η₄)')
+        axs[1][1].set_xlabel('Im(V1rb)')
+        axs[1][1].set_ylabel('Im(η₄)')
+        from matplotlib.cm import get_cmap
+        n_shades = self.nrMeas + 5
+        cmap = get_cmap('Blues')
+        pt_colors = [cmap(0.25 + 0.75 * k / (n_shades - 1)) for k in range(n_shades)]
+        for k, (xrk, xik, erk, eik) in enumerate(zip(xr, xi, er, ei)):
+            c = pt_colors[min(k, n_shades - 1)]
+            axs[0][0].plot(xrk, erk, '.', color=c, markersize=8)
+            axs[0][1].plot(xik, erk, '.', color=c, markersize=8)
+            axs[1][0].plot(xrk, eik, '.', color=c, markersize=8)
+            axs[1][1].plot(xik, eik, '.', color=c, markersize=8)
+        for row in axs:
+            for ax in row:
+                ax.tick_params(axis='x', rotation=30)
+        V1rb_best = self.calc_V1rb_best()
+        if V1rb_best is not None:
+            xr_mean, xi_mean = np.mean(xr), np.mean(xi)
+            dxr, dxi = xr - xr_mean, xi - xi_mean
+            N = len(xr)
+            A = np.block([
+                [np.column_stack([dxr, -dxi, np.ones(N), np.zeros(N)])],
+                [np.column_stack([dxi,  dxr, np.zeros(N), np.ones(N)])]
+            ])
+            params, _, _, _ = np.linalg.lstsq(A, np.concatenate([er, ei]), rcond=None)
+            a, b, cr, ci = params
+            xr_best, xi_best = V1rb_best.real, V1rb_best.imag
+            xr_line = np.linspace(xr.min(), xr.max(), 50)
+            xi_line = np.linspace(xi.min(), xi.max(), 50)
+            axs[0][0].plot(xr_line, a * (xr_line - xr_mean) + cr, 'b-')
+            axs[0][1].plot(xi_line, -b * (xi_line - xi_mean) + cr, 'b-')
+            axs[1][0].plot(xr_line, b * (xr_line - xr_mean) + ci, 'b-')
+            axs[1][1].plot(xi_line, a * (xi_line - xi_mean) + ci, 'b-')
+            for ax in [axs[0][0], axs[1][0]]:
+                ax.axvline(xr_best, color='r', linestyle='--')
+            for ax in [axs[0][1], axs[1][1]]:
+                ax.axvline(xi_best, color='r', linestyle='--')
+            axs[0][0].plot(xr_best, 0, 'r*', markersize=10)
+            axs[0][1].plot(xi_best, 0, 'r*', markersize=10)
+            axs[1][0].plot(xr_best, 0, 'r*', markersize=10)
+            axs[1][1].plot(xi_best, 0, 'r*', markersize=10)
+        for i in range(2):
+            for j in range(2):
+                self.balanceplots[i, j].canvas.draw()
 
     def plotpsa(self):
         if self.rSet.ts <= 0:

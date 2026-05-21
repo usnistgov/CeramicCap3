@@ -29,14 +29,11 @@ class ConfigEditor(QWidget):
         outer.addWidget(scroll)
 
         btn_row = QHBoxLayout()
-        btn_save = QPushButton('Save')
         btn_reload = QPushButton('Reload')
-        btn_row.addWidget(btn_save)
         btn_row.addWidget(btn_reload)
         btn_row.addStretch()
         outer.addLayout(btn_row)
 
-        btn_save.clicked.connect(self.save)
         btn_reload.clicked.connect(self.reload)
 
         self._build()
