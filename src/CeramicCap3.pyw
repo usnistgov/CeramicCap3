@@ -26,6 +26,7 @@ from PyQt5.QtCore import (
 
 from PyQt5.QtWidgets import (
     QApplication,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -346,6 +347,10 @@ class MainWindow(QMainWindow):
         return V1
 
     def startMeas(self):
+        desc, ok = QInputDialog.getText(self, 'Run description', 'Enter a one-line description for this run:')
+        if not ok:
+            return
+        self.run_description = desc.strip()
         self.circuit_setup.save_config()
         self.parseconfig()
         self.measuring = True
@@ -489,6 +494,7 @@ class MainWindow(QMainWindow):
         rdict = self.allData.getkeys(f, mykeys)
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
+                file.write('# {}\n'.format(self.run_description))
                 o = '# '
                 for k, v in rdict.items():
                     if isinstance(v[0], complex):
@@ -514,7 +520,8 @@ class MainWindow(QMainWindow):
         fn = 'VOLT_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
-                file.write('# frequency/Hz t/s  reV1 imV1 reV2 imV2 reV3 imV3 reV4 imV4 reV1set imV1set reV2set imV2set \n')
+                file.write('# {}\n'.format(self.run_description))
+                file.write('# frequency/Hz t/s  reV1 imV1 reV2 imV2 reV3 imV3 reV4 imV4 reV1set imV1set reV2set imV2set gain1 gain2\n')
         with open(os.path.join(bd0, fn), "a") as file:
             for n in range(np.shape(C)[0]):
                 o = '{0:6.0f} {1:6.1f} '.format(C[n, 0], C[n, 1])

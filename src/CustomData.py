@@ -312,6 +312,7 @@ class AllData():
                     line = np.hstack((line, obj.raw8[j,k].real, obj.raw8[j,k].imag))
                 for k in range(np.shape(obj.ctrla)[1]):
                     line = np.hstack((line, obj.ctrla[j//2,k].real, obj.ctrla[j//2,k].imag))
+                line = np.hstack((line, obj.Res['gain1'], obj.Res['gain2']))
                 ret.append(line)
         return np.array(ret)
 
