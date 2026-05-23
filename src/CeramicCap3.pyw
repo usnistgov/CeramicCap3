@@ -24,22 +24,21 @@ from PyQt5.QtCore import (
     Qt,
     pyqtSignal)
 
+from PyQt5.QtGui import QKeySequence
+
 from PyQt5.QtWidgets import (
     QApplication,
     QInputDialog,
     QLabel,
     QMainWindow,
     QPushButton,
+    QShortcut,
     QVBoxLayout,
     QHBoxLayout,
     QWidget,
-    QSpacerItem,
-    QSizePolicy,
     QStatusBar,
     QProgressBar,
     QTextEdit,
-    QRadioButton,
-    QButtonGroup
 )
 
 
@@ -81,6 +80,9 @@ class MainWindow(QMainWindow):
         self.tza2.set_fgain(self.g2)
         self.warmup_count = 0
 
+        self.le_fixed_g1 = None
+        self.le_fixed_g2 = None
+        self.C41_eff = None
         self.fsigold = -1
         self.rData = CustomData.NPoints(1000, 800000)
         self.rSet = CustomData.FourChannels(1000, 800000, 2, [], [], [], [], 0, 0, 0, ts=-1)
@@ -129,62 +131,24 @@ class MainWindow(QMainWindow):
         self.mstatus.resize(540, 200)
         self.mstatus.setReadOnly(True)
 
-        glayout = QHBoxLayout()
-        vlayout = QVBoxLayout()
-        vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Fixed))
-
         self.buStart = QPushButton("Start")
         self.buStop  = QPushButton("Stop")
-        self.buQuit = QPushButton("Quit")
-        self.bufp = QPushButton("f++")
-        self.bufm = QPushButton("f--")
-        vlayout.addWidget(self.buStart)
-        vlayout.addWidget(self.buStop)
-        vlayout.addWidget(self.buQuit)
-        vlayout.addWidget(self.bufp)
-        vlayout.addWidget(self.bufm)
-        vlayout.addWidget(QLabel('current f:'))
-        self.laf = QLabel('{0:5.1f} kHz'.format(self.fsig/1000))
-        vlayout.addWidget(self.laf)
-        vlayout.addWidget(QLabel('Re(V1):'))
-        self.lareV1 = QLabel("{0:8.3f} V".format(np.real(self.V1)))
-        vlayout.addWidget(self.lareV1)
-        vlayout.addWidget(QLabel('Im(V1):'))
-        self.laimV1 = QLabel('{0:8.3f} V'.format(np.imag(self.V1)))
-        vlayout.addWidget(self.laimV1)
-        vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Expanding))
+        self.buQuit  = QPushButton("Quit")
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.buStart)
+        button_row.addWidget(self.buStop)
+        button_row.addWidget(self.buQuit)
+        button_row.addStretch()
 
-        glayout.addLayout(vlayout)
         self.circuit_setup = CircuitSetup.CircuitSetupWidget(self.config.cfgpath)
         self.config_editor = ConfigEditor.ConfigEditor(self.config.cfgpath)
         self.config_editor.configSaved.connect(self.parseconfig)
         self.tabWidget = MyTabWidget(self)
-        glayout.addWidget(self.tabWidget)
-        vlayout = QVBoxLayout()
-        self.rg1 = QButtonGroup()
-        self.rg2 = QButtonGroup()
 
-        self.rb1 = [QRadioButton(i) for i in self.tza1.gaindict.values()]
-        vlayout.addWidget(QLabel('Gain left'))
-        for rb in self.rb1:
-            self.rg1.addButton(rb)
-            vlayout.addWidget(rb)
-            if rb.text() == self.tza1.hgain:
-                rb.setChecked(True)
-
-        self.rb2 = [QRadioButton(i) for i in self.tza2.gaindict.values()]
-        vlayout.addWidget(QLabel('Gain right'))
-        for rb in self.rb2:
-            self.rg2.addButton(rb)
-            vlayout.addWidget(rb)
-            if rb.text() == self.tza2.hgain:
-                rb.setChecked(True)
-        vlayout.addItem(QSpacerItem(60, 20, QSizePolicy.Fixed, QSizePolicy.Expanding))
-        glayout.addLayout(vlayout)
-        self.rg1.buttonToggled.connect(self.rb1Toggled)
-        self.rg2.buttonToggled.connect(self.rb2Toggled)
-
-        central_widget.setLayout(glayout)
+        main_layout = QVBoxLayout()
+        main_layout.addLayout(button_row)
+        main_layout.addWidget(self.tabWidget)
+        central_widget.setLayout(main_layout)
 
         self.progressBar = QProgressBar()
         self.progressBar.setMaximumWidth(400)
@@ -196,9 +160,21 @@ class MainWindow(QMainWindow):
         widget.setLayout(QHBoxLayout())
         self.sblabel = QLabel("")
         self.etalabel = QLabel("")
+        self.freqlabel = QLabel("—")
+        self.freqprogresslabel = QLabel("")
+        self.sweepProgressBar = QProgressBar()
+        self.sweepProgressBar.setMaximumWidth(200)
+        self.sweepProgressBar.setRange(0, 1)
+        self.sweepProgressBar.setValue(0)
+        self.sweepProgressBar.setFormat('%v / %m freq')
+        self.gainlabel = QLabel("g1=—  g2=—")
         widget.layout().addWidget(self.sblabel)
         widget.layout().addWidget(self.progressBar)
+        widget.layout().addWidget(self.freqlabel)
+        widget.layout().addWidget(self.sweepProgressBar)
+        widget.layout().addWidget(self.freqprogresslabel)
         widget.layout().addWidget(self.etalabel)
+        widget.layout().addWidget(self.gainlabel)
         self.statusBar.showMessage('Welcome to CeramicCap', 5000)
         self.statusBar.addPermanentWidget(widget)
 
@@ -206,10 +182,13 @@ class MainWindow(QMainWindow):
         self.buStop.clicked.connect(self.stopMeas)
         self.buStop.setEnabled(False)
         self.buQuit.clicked.connect(self.finishUp)
-        self.bufp.clicked.connect(self.fp)
-        self.bufm.clicked.connect(self.fm)
         self.resetDone.connect(self._on_reset_done)
         self.buStart.setEnabled(False)
+
+        QShortcut(QKeySequence('Space'), self, self._toggle_meas)
+        QShortcut(QKeySequence('Q'),     self, self.finishUp)
+
+        self.setWindowTitle('CeramicCap3')
         self.statusBar.showMessage('Initializing instruments...', 0)
         threading.Thread(target=self._reset_bg, daemon=True).start()
 
@@ -219,21 +198,38 @@ class MainWindow(QMainWindow):
 
     def _on_reset_done(self):
         self.buStart.setEnabled(True)
-        self.statusBar.showMessage('Ready — press Start to begin', 0)
+        self.statusBar.showMessage('Ready — press Start to begin  [Space] start/stop  [Q] quit', 0)
         self.myprint('Instruments reset and ready')
+
+    def _toggle_meas(self):
+        if self.measuring:
+            self.stopMeas()
+        elif self.buStart.isEnabled():
+            self.startMeas()
 
     def parseconfig(self):
         self.config.read()
         self.C31 = self.config.C31
         self.C32 = self.config.C32
+        old_C41  = getattr(self, 'C41',  None)
+        old_C42  = getattr(self, 'C42',  None)
+        old_SN41 = getattr(self, 'SN41', None)
+        old_SN42 = getattr(self, 'SN42', None)
         self.C41 = self.config.C41
         self.C42 = self.config.C42
+        desc = getattr(self, 'run_description', '').strip()
+        if desc:
+            self.myprint('=' * 56)
+            self.myprint(desc)
+            self.myprint('=' * 56)
         self.myprint("Measuring C31={0:3.0e} C32= {1:3.0e} & C41={2:3.0e} C42={3:3.0e}".format(self.C31, self.C32, self.C41, self.C42))
 
         self.SN31 = self.config.SN31
         self.SN32 = self.config.SN32
         self.SN41 = self.config.SN41
         self.SN42 = self.config.SN42
+        if self.C41 != old_C41 or self.C42 != old_C42 or self.SN41 != old_SN41 or self.SN42 != old_SN42:
+            self.C41_eff = None
 
         self.myprint("S/N: {0} {1} {2} {3}".format(self.SN31, self.SN32, self.SN41, self.SN42))
 
@@ -251,28 +247,26 @@ class MainWindow(QMainWindow):
         self.nwarmup = self.config.nwarmup
         self.fixg1 = self.config.fixg1
         self.fixg2 = self.config.fixg2
+        self._SAT_THRESHOLD = self.config.sat_threshold
         self.fixed_g1 = R2FMath.mingainvalue1(self.flist, self.C31, self.dV) if self.fixg1 else None
         self.fixed_g2 = R2FMath.mingainvalue2(self.flist, self.C41) if self.fixg2 else None
+        if self.le_fixed_g1 is not None:
+            self.le_fixed_g1.setText(str(int(self.fixed_g1)) if self.fixed_g1 is not None else '— (fixg1 off)')
+            self.le_fixed_g2.setText(str(int(self.fixed_g2)) if self.fixed_g2 is not None else '— (fixg2 off)')
         self.ver = self.config.version
         global _logdir
         _logdir = self.config.logdir
 
     def RBupdate(self):
-        for rb in self.rb1:
-            if rb.text() == self.tza1.hgain:
-                rb.setChecked(True)
-        for rb in self.rb2:
-            if rb.text() == self.tza2.hgain:
-                rb.setChecked(True)
+        self.gainlabel.setText(f"g1={self.g1}  g2={self.g2}")
 
     def laUpdate(self):
-        self.laf.setText('{0:8.1f} kHz'.format(self.fsig/1000))
-        self.lareV1.setText('{0:8.3f} V'.format(np.real(self.V1)))
-        self.laimV1.setText('{0:8.3f} V'.format(np.imag(self.V1)))
+        pass
 
     def setf(self, f):
         self.statusBar.showMessage('Next frequency: {0} kHz'.format(f/1000), 5000)
         self.fsig = f
+        self.freqlabel.setText(f'{f/1000:.3g} kHz')
         self.allData.deletekey(f)
 
     def fp(self):
@@ -293,15 +287,6 @@ class MainWindow(QMainWindow):
             else:
                 self.setf(self.flist[-1])
 
-    def rb1Toggled(self, button, checked):
-        if checked:
-            self.tza1.set_hgain(button.text())
-            self.g1 = self.tza1.text_to_gain(button.text())
-
-    def rb2Toggled(self, button, checked):
-        if checked:
-            self.tza2.set_hgain(button.text())
-            self.g2 = self.tza2.text_to_gain(button.text())
 
     def stopMeas(self):
         if not self.measuring:
@@ -313,6 +298,7 @@ class MainWindow(QMainWindow):
 
     def finishUp(self):
         if not self.measuring:
+            self.circuit_setup.save_config()
             self.close()
             return
         self.statusBar.showMessage('Wait for graceful exit')
@@ -330,25 +316,90 @@ class MainWindow(QMainWindow):
             self.quit = True
             event.ignore()
         else:
+            self.circuit_setup.save_config()
             self.statusBar.showMessage('Quitting')
             self.myprint("Quitting gracefully")
             event.accept()
 
+    def _reduce_gain(self, g):
+        """Reduce gain by one decade, floored at 1. Returns new gain."""
+        if g <= 1:
+            return 1
+        new_g = max(1, g // 10)
+        return new_g
 
     def onNewData(self, MyData: CustomData.NPoints):
         old_rData = self.rData
         self.livePhasors = [[] for _ in range(4)]
         self.rData = MyData
+
+        # Gain adjustment is only permitted during warmup
+        max_v3 = self.rData.max_raw_amplitude(2)
+        max_v4 = self.rData.max_raw_amplitude(3)
+        in_warmup = self.warmup_count <= self.nwarmup
+        sat3 = in_warmup and (not self.fixg1) and max_v3 > self._SAT_THRESHOLD
+        sat4 = in_warmup and (not self.fixg2) and max_v4 > self._SAT_THRESHOLD
+        if sat3 or sat4:
+            myop=f'r gain {sat3=} {sat4=} {self.g1} {self.g2}'
+            if sat3:
+                self.g1 = self._reduce_gain(self.g1)
+                self.tza1.set_fgain(self.g1)
+            if sat4:
+                self.g2 = self._reduce_gain(self.g2)
+                self.tza2.set_fgain(self.g2)
+            myop+=f'to {self.g1} {self.g2}'
+            self.myprint(myop)
+            parts = []
+            if sat3: parts.append(f'V3 → g1={self.g1}')
+            if sat4: parts.append(f'V4 → g2={self.g2}')
+            self.statusBar.showMessage(f'⚠  Saturation: {", ".join(parts)} — gain reduced', 4000)
+            self.RBupdate()
+            self.warmup_count = 0
+            self.meta_V1rb = []
+            self.meta_eta4 = []
+            old_rData.strip_raw()
+            return  # discard saturated measurement; next goagain() uses the reduced gain
+
+        # Low-signal check: if V3 or V4 is tiny during warmup, boost gain one decade
+        low3 = in_warmup and (not self.fixg1) and max_v3 < self._SAT_THRESHOLD / 20 and self.g1 < 100000
+        low4 = in_warmup and (not self.fixg2) and max_v4 < self._SAT_THRESHOLD / 20 and self.g2 < 100000
+        if low3 or low4:
+            myop = f'i gain {low3=} {low4=} {self.g1} {self.g2}'
+            if low3:
+                self.g1 = min(100000, self.g1 * 10)
+                self.tza1.set_fgain(self.g1)
+            if low4:
+                self.g2 = min(100000, self.g2 * 10)
+                self.tza2.set_fgain(self.g2)
+            myop += f' to {self.g1} {self.g2}'
+            self.myprint(myop)
+            parts = []
+            if low3: parts.append(f'V3 → g1={self.g1}')
+            if low4: parts.append(f'V4 → g2={self.g2}')
+            self.statusBar.showMessage(f'↑  Low signal: {", ".join(parts)} — gain increased', 4000)
+            self.RBupdate()
+            self.warmup_count = 0
+            self.meta_V1rb = []
+            self.meta_eta4 = []
+            old_rData.strip_raw()
+            return  # discard low-signal measurement; next goagain() uses the boosted gain
+
         self.V1 = self.rData.Res['V1_balance']
         m   = self.rData.Res['eta4fit_slope']
         v4m = self.rData.Res['eta4_mean']
-        self.myprint(f"eta4 fit: slope={m:.5f}  eta4_mean={v4m:.5f}  V1_balance={self.V1:.5f}")
         self.meta_V1rb.append(self.rData.Res['V1rb_center'])
         self.meta_eta4.append(self.rData.Res['eta4_mean'])
         V1rb_best = self.calc_V1rb_best()
         if V1rb_best is not None:
-            self.V1 = V1rb_best
-            self.myprint(f"Overriding V1 with V1rb_best={V1rb_best:.5f}")
+            if np.isfinite(V1rb_best.real) and np.isfinite(V1rb_best.imag):
+                V1bo_str = f'  V1bo={V1rb_best:.5f}'
+                self.V1 = V1rb_best
+            else:
+                V1bo_str = f'  V1bo=non-finite({V1rb_best})'
+        else:
+            V1bo_str = ''
+        self.myprint(f"fit m={m:.2f}  c={v4m:.4f}  V1b={self.rData.Res['V1_balance']:.5f}{V1bo_str}")
+        self._update_C41_eff()
         if self.rData.goodData:
             self.warmup_count += 1
             if self.warmup_count > self.nwarmup:
@@ -362,6 +413,8 @@ class MainWindow(QMainWindow):
             if self.allData.countf(self.fsig) == self.nrMeas:
                 self.saveData(self.fsig)
                 self.freqs_done += 1
+                self.freqprogresslabel.setText(f'{self.freqs_done}/{self.total_freqs} freq')
+                self.sweepProgressBar.setValue(self.freqs_done)
                 elapsed = time.time() - self.run_start_time
                 secs_remaining = (self.total_freqs - self.freqs_done) * elapsed / self.freqs_done
                 eta = datetime.datetime.now() + datetime.timedelta(seconds=secs_remaining)
@@ -375,11 +428,23 @@ class MainWindow(QMainWindow):
 
     def calcVsmall(self, f, V2=-9.0, R=50):
         C42 = self.C42
-        C41 = self.C41
-        iw = 1j*f*2*np.pi
-        I1 = V2*iw*C42/(1+iw*C42*R)
-        V1 = -I1*(R+1/(iw*C41))
+        C41 = self.C41_eff if self.C41_eff is not None else self.C41
+        iw = 1j * f * 2 * np.pi
+        I1 = V2 * iw * C42 / (1 + iw * C42 * R)
+        V1 = -I1 * (R + 1 / (iw * C41))
         return V1
+
+    def _update_C41_eff(self, R=50):
+        """Infer effective C41 from the current measured V1_balance and V2."""
+        try:
+            iw = 1j * 2 * np.pi * self.fsig
+            I2 = self.V2 * iw * self.C42 / (1 + iw * self.C42 * R)
+            Z_cap = -self.V1 / I2 - R
+            C41_new = float(np.real(1.0 / (iw * Z_cap)))
+            if C41_new > 0 and 0.1 * self.C41 < C41_new < 10 * self.C41:
+                self.C41_eff = C41_new
+        except Exception:
+            pass
 
     def startMeas(self):
         desc, ok = QInputDialog.getText(self, 'Run description', 'Enter a one-line description for this run:')
@@ -391,10 +456,12 @@ class MainWindow(QMainWindow):
         self.measuring = True
         self.buStart.setEnabled(False)
         self.buStop.setEnabled(True)
+        self.buStop.setStyleSheet('background-color: #c0392b; color: white; font-weight: bold;')
         self.allData = CustomData.AllData()
         self.runDataDir = self.ensureDir()
         self.meta_V1rb = []
         self.meta_eta4 = []
+        self.C41_eff = None
         self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
         self.warmup_count = 0
@@ -406,7 +473,12 @@ class MainWindow(QMainWindow):
         except ValueError:
             start_idx = 0
         self.total_freqs = len(self.flist) - start_idx
+        self.freqlabel.setText(f'{self.fsig/1000:.3g} kHz')
+        self.freqprogresslabel.setText(f'0/{self.total_freqs} freq')
+        self.sweepProgressBar.setRange(0, self.total_freqs)
+        self.sweepProgressBar.setValue(0)
         self.etalabel.setText('')
+        self.setWindowTitle(f'CeramicCap3 — {self.run_description}')
         self.myprint("Starting frequency sweep")
         self.statusBar.showMessage('Measuring...', 0)
         self.goagain()
@@ -427,11 +499,16 @@ class MainWindow(QMainWindow):
                     self.V2 = self.V2*0.9
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
             else:
-                self.g1 = self.fixed_g1 if self.fixg1 else R2FMath.newgainvalue1(self.fsig, self.C31, self.dV)
-                self.g2 = self.fixed_g2 if self.fixg2 else R2FMath.newgainvalue2(self.fsig, self.C41)
+                self.myprint(f"  {self.fsig/1000:.4g} kHz  ".center(56, '-'))
+                tempgain1 = R2FMath.newgainvalue1(self.fsig, self.C31, dV= self.dV,Vmax=3)
+                tempgain2 = R2FMath.newgainvalue2(self.fsig, self.C41, dV= self.dV,Vmax=3)
+
+                self.g1 = self.fixed_g1 if self.fixg1 else tempgain1
+                self.g2 = self.fixed_g2 if self.fixg2 else tempgain2
                 #self.g1 = 1
                 #self.g2 = 1
-                self.myprint('pick gains {0} {1}'.format(self.g1, self.g2))
+                C41_used = self.C41_eff if self.C41_eff is not None else self.C41
+                self.myprint(f'getgain {self.C31=:.1e} C41_used={C41_used:.3e} (nom {self.C41:.1e}) {tempgain1=} {tempgain2=} {self.g1} {self.g2}')
                 self.config.setGains(self.g1, self.g2)
                 self.tza1.set_fgain(self.g1)
                 self.tza2.set_fgain(self.g2)
@@ -440,13 +517,37 @@ class MainWindow(QMainWindow):
                 self.sblabel.setText(f"warming up at {self.fsig/1000:5.2f} kHz")
                 self.meta_V1rb = []
                 self.meta_eta4 = []
+                V1_balance_prev = self.V1   # measured balance from previous frequency
+                V2_prev        = self.V2   # V2 that was used at previous frequency
                 self.V2 = -9.9+0j
-                self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
+                V1_model_next = self.calcVsmall(self.fsig, V2=self.V2)
+                if self.fsigold > 0:
+                    # Apply a multiplicative correction derived from the previous
+                    # frequency: ratio = measured / model(f_prev).  Multiplying
+                    # model(f_next) by this ratio corrects for parasitics without
+                    # assuming the balance is identical across a large frequency jump.
+                    V1_model_prev = self.calcVsmall(self.fsigold, V2=V2_prev)
+                    if abs(V1_model_prev) > 1e-10:
+                        ratio = V1_balance_prev / V1_model_prev
+                        self.V1 = V1_model_next * ratio
+                    else:
+                        self.V1 = V1_model_next
+                else:
+                    self.V1 = V1_model_next
+                # Sanity-check V1 against the plain nominal model (C41, not C41_eff).
+                # If ratio correction or a corrupted C41_eff produced a wildly wrong
+                # V1, fall back to the nominal so V2 is never scaled to zero.
+                iw_nom = 1j * self.fsig * 2 * np.pi
+                I1_nom = self.V2 * iw_nom * self.C42 / (1 + iw_nom * self.C42 * 50)
+                V1_nominal = -I1_nom * (50 + 1 / (iw_nom * self.C41))
+                if abs(V1_nominal) > 1e-10 and abs(self.V1) > 3 * abs(V1_nominal):
+                    self.myprint(f'V1={self.V1:.4f} too far from nominal {V1_nominal:.4f} — using nominal')
+                    self.V1 = V1_nominal
                 while np.abs(self.V1) > 9:
-                    self.V2 = self.V2*0.9
-                    self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
+                    self.V2 *= 0.9
+                    self.V1 *= 0.9
                 self.dV = np.abs(self.V1) * self.dvfrac
-                self.myprint(f'{self.V1=} {self.V2=} {self.dV=}')
+                self.myprint(f'{self.V1=:.5f} {self.V2=:.5f} {self.dV=:.5f}')
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
             self.laUpdate()
             self.mydvm.logMessage.connect(self.myprint)
@@ -467,7 +568,10 @@ class MainWindow(QMainWindow):
                                        else 'Sweep complete — press Start to measure again', 0)
             self.buStart.setEnabled(True)
             self.buStop.setEnabled(False)
+            self.buStop.setStyleSheet('')
             self.etalabel.setText(f"Done {datetime.datetime.now().strftime('%H:%M:%S')}")
+            title_suffix = 'Stopped' if stopped else 'Complete'
+            self.setWindowTitle(f'CeramicCap3 — {getattr(self, "run_description", "")} [{title_suffix}]')
 
     def onNewSet(self, MySet: CustomData.FourChannels):
         self.rSet = MySet
@@ -642,8 +746,18 @@ class MainWindow(QMainWindow):
             if f_bar:
                 ax.errorbar(f_bar, v_bar, yerr=e_bar, fmt=color + 'o', capsize=3, ms=4)
 
-        add_scalar(self.alphafplots[0, 0].canvas.ax1, 'al_left',  'r')
-        add_scalar(self.alphafplots[0, 1].canvas.ax1, 'al_right', 'b')
+        from matplotlib.lines import Line2D as _L2D
+        for ax, a_key, d_key, side in [
+            (self.alphafplots[0, 0].canvas.ax1, 'al_left',  'D_left',  '₃'),
+            (self.alphafplots[0, 1].canvas.ax1, 'al_right', 'D_right', '₄'),
+        ]:
+            add_scalar(ax, a_key, 'r')
+            add_scalar(ax, d_key, 'b')
+            ax.set_ylabel(f'α{side} / D{side}')
+            ax.legend(handles=[
+                _L2D([0], [0], color='r', marker='o', ls='', label=f'α{side}  (Re ΔC/C)'),
+                _L2D([0], [0], color='b', marker='o', ls='', label=f'D{side}  (Im ΔC/C)'),
+            ], fontsize=8)
 
         from matplotlib.lines import Line2D
         for ax, bx, g_key, label in [
@@ -716,25 +830,36 @@ class MainWindow(QMainWindow):
         for j in range(2):
             self.etaplots[0, j].canvas.draw()
 
-    def calc_V1rb_best(self):
+    def calc_V1rb_best(self, decay=0.85):
         if len(self.meta_V1rb) < 3:
             return None
-        V1rb = np.array(self.meta_V1rb[-6:])
-        eta4 = np.array(self.meta_eta4[-6:])
+        V1rb = np.array(self.meta_V1rb)
+        eta4 = np.array(self.meta_eta4)
+        N = len(V1rb)
+        # Exponential weights: most recent point = 1, older points decay geometrically.
+        # decay=0.85 means a point 10 measurements ago has weight ~0.20.
+        weights = decay ** np.arange(N - 1, -1, -1)
+        w = np.sqrt(weights)   # scale rows so lstsq minimises weighted sum of squares
         xr, xi = V1rb.real, V1rb.imag
         er, ei = eta4.real, eta4.imag
-        xr_mean, xi_mean = np.mean(xr), np.mean(xi)
+        xr_mean = np.dot(weights, xr) / weights.sum()
+        xi_mean = np.dot(weights, xi) / weights.sum()
         dxr, dxi = xr - xr_mean, xi - xi_mean
-        N = len(xr)
         A = np.block([
             [np.column_stack([dxr, -dxi, np.ones(N), np.zeros(N)])],
             [np.column_stack([dxi,  dxr, np.zeros(N), np.ones(N)])]
         ])
-        params, _, _, _ = np.linalg.lstsq(A, np.concatenate([er, ei]), rcond=None)
+        W = np.concatenate([w, w])
+        params, _, _, _ = np.linalg.lstsq(A * W[:, np.newaxis], np.concatenate([er, ei]) * W, rcond=None)
         a, b, cr, ci = params
         m_meta = a + 1j * b
         c_meta = cr + 1j * ci
-        return (xr_mean + 1j * xi_mean) - c_meta / m_meta
+        if abs(m_meta) < 1e-12:
+            return None
+        result = (xr_mean + 1j * xi_mean) - c_meta / m_meta
+        if not np.isfinite(result.real) or not np.isfinite(result.imag) or abs(result) > 10.0:
+            return None
+        return result
 
     def plotbalance(self):
         for i in range(2):
@@ -758,9 +883,9 @@ class MainWindow(QMainWindow):
         axs[1][0].set_ylabel('Im(η₄)')
         axs[1][1].set_xlabel('Im(V1rb)')
         axs[1][1].set_ylabel('Im(η₄)')
-        from matplotlib.cm import get_cmap
+        import matplotlib
         n_shades = self.nrMeas + 5
-        cmap = get_cmap('Blues')
+        cmap = matplotlib.colormaps['Blues']
         pt_colors = [cmap(0.25 + 0.75 * k / (n_shades - 1)) for k in range(n_shades)]
         for k, (xrk, xik, erk, eik) in enumerate(zip(xr, xi, er, ei)):
             c = pt_colors[min(k, n_shades - 1)]

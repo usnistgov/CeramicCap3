@@ -241,6 +241,16 @@ class NPoints:
             np.any(~np.isfinite(np.abs(self.combined4)))
         )
 
+    def max_raw_amplitude(self, channel_idx):
+        """Return max |raw sample| across all measurement points for the given channel index."""
+        mx = 0.0
+        for d in self.Data:
+            if isinstance(d, FourChannels) and len(d.Data) > channel_idx:
+                raw = d.Data[channel_idx].data
+                if raw is not None:
+                    mx = max(mx, float(np.max(np.abs(raw))))
+        return mx
+
     def strip_raw(self):
         for fc in self.Data:
             if isinstance(fc, FourChannels):

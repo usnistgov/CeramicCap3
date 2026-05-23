@@ -111,6 +111,7 @@ class Meas(QObject):
         else:
             self.dvm.write('ROUT:OPEN (@218,241)')
             self.dvm.write('ROUT:CLOS (@211,248)')
+        self._stop_event.wait(1.0)  # let relay contacts settle before driving signal
         if self.V1_setpoints is not None:
             self.V1 = self.V1_setpoints[self.co//2]
         else:

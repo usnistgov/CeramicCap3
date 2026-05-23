@@ -4,6 +4,9 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QWidget,
     QTabWidget,
+    QGroupBox,
+    QFormLayout,
+    QLineEdit,
 )
 
 class MyTabWidget(QWidget):
@@ -70,7 +73,19 @@ class MyTabWidget(QWidget):
 
         glayout =  QGridLayout()
         self.mytabs[9].setLayout(glayout)
-        glayout.addWidget(parent.config_editor,0,0)
+        glayout.addWidget(parent.config_editor, 0, 0)
+
+        gains_box = QGroupBox('Computed gains (read-only)')
+        gains_form = QFormLayout(gains_box)
+        parent.le_fixed_g1 = QLineEdit('—')
+        parent.le_fixed_g1.setReadOnly(True)
+        parent.le_fixed_g2 = QLineEdit('—')
+        parent.le_fixed_g2.setReadOnly(True)
+        gains_form.addRow('fixed g1', parent.le_fixed_g1)
+        gains_form.addRow('fixed g2', parent.le_fixed_g2)
+        glayout.addWidget(gains_box, 1, 0)
+        glayout.setRowStretch(0, 1)
+        glayout.setRowStretch(1, 0)
 
         
 
