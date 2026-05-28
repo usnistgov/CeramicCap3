@@ -29,6 +29,7 @@ class CCC():
         self.fixg1 = self.cp['MEAS'].getboolean('fixg1', fallback=False)
         self.fixg2 = self.cp['MEAS'].getboolean('fixg2', fallback=False)
         self.sat_threshold = float(self.meas.get('SATTHRESHOLD', '10.0'))
+        self.switching = self.cp['MEAS'].getboolean('switching', fallback=True)
         self.version = self.meas.get('VERSION', 'unknown')
 
         k1='CONFIG'

@@ -101,6 +101,11 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.rawplots[i, j] = mplwidget.MplWidget(rightax=False)
 
+        self.residplots = np.empty((2, 2), dtype=object)
+        for i in range(2):
+            for j in range(2):
+                self.residplots[i, j] = mplwidget.MplWidget(rightax=False)
+
         self.psaplots = np.empty((2, 2), dtype=object)
         for i in range(2):
             for j in range(2):
@@ -144,6 +149,8 @@ class MainWindow(QMainWindow):
         self.config_editor = ConfigEditor.ConfigEditor(self.config.cfgpath)
         self.config_editor.configSaved.connect(self.parseconfig)
         self.tabWidget = MyTabWidget(self)
+        self.psa_show_resid = False
+        self.psa_resid_btn.clicked.connect(self._toggle_psa_mode)
 
         main_layout = QVBoxLayout()
         main_layout.addLayout(button_row)
@@ -248,6 +255,7 @@ class MainWindow(QMainWindow):
         self.fixg1 = self.config.fixg1
         self.fixg2 = self.config.fixg2
         self._SAT_THRESHOLD = self.config.sat_threshold
+        self.switching = self.config.switching
         self.fixed_g1 = R2FMath.mingainvalue1(self.flist, self.C31, self.dV) if self.fixg1 else None
         self.fixed_g2 = R2FMath.mingainvalue2(self.flist, self.C41) if self.fixg2 else None
         if self.le_fixed_g1 is not None:
@@ -273,10 +281,8 @@ class MainWindow(QMainWindow):
         f = self.fsig
         if f in self.flist:
             ix = self.flist.index(f)
-            if ix+1 < len(self.flist):
-                self.setf(self.flist[ix+1])
-            else:
-                self.setf(self.flist[0])
+            if ix + 1 < len(self.flist):
+                self.setf(self.flist[ix + 1])
 
     def fm(self):
         f = self.fsig
@@ -451,6 +457,7 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         self.run_description = desc.strip()
+        self.config_editor.save()
         self.circuit_setup.save_config()
         self.parseconfig()
         self.measuring = True
@@ -489,7 +496,7 @@ class MainWindow(QMainWindow):
             self.close()
         elif self.measuring:
             self.thread = QThread()
-            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp)
+            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp, switching=self.switching, chunk_periods=10)
             self.mydvm.moveToThread(self.thread)
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
@@ -612,6 +619,8 @@ class MainWindow(QMainWindow):
             self.showOutput()
         elif tat == 'raw':
             self.plotraw()
+        elif tat == 'resid':
+            self.plotresid()
         elif tat == 'PSA':
             self.plotpsa()
         elif tat == 'alpha(f)':
@@ -928,6 +937,11 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.balanceplots[i, j].canvas.draw()
 
+    def _toggle_psa_mode(self):
+        self.psa_show_resid = not self.psa_show_resid
+        self.psa_resid_btn.setText('Show: Raw' if self.psa_show_resid else 'Show: Residuals')
+        self.plotpsa()
+
     def plotpsa(self):
         if self.rSet.ts <= 0:
             return
@@ -938,16 +952,32 @@ class MainWindow(QMainWindow):
         for idx, (row, col) in enumerate([(0, 0), (0, 1), (1, 0), (1, 1)]):
             ax = self.psaplots[row, col].canvas.ax1
             ax.cla()
-            data = np.asarray(self.rSet.Data[idx].data, dtype=float)
-            n = len(data)
+            d = self.rSet.Data[idx]
+            raw = np.asarray(d.data, dtype=float)
+            if self.psa_show_resid and d.fv is not None:
+                signal = raw - np.asarray(d.fv, dtype=float)
+            else:
+                signal = raw
+            n = len(signal)
             w = np.hanning(n)
-            amp = np.abs(np.fft.rfft(data * w)) / (np.sum(w) / 2)
+            amp = np.abs(np.fft.rfft(signal * w)) / (np.sum(w) / 2)
             freqs = np.fft.rfftfreq(n, d=1.0 / fsamp)
             ax.semilogy(freqs[1:], amp[1:], colors[idx] + '-', linewidth=0.5)
-            ax.axvline(x=fsig, color='k', linestyle='--', linewidth=0.8)
+            # Arrow from local floor up to the signal-frequency bin
+            sig_bin = np.argmin(np.abs(freqs[1:] - fsig))
+            n_adj = 8
+            lo = max(0, sig_bin - n_adj)
+            hi = min(len(freqs) - 2, sig_bin + n_adj)
+            adj = np.concatenate([amp[1 + lo : 1 + sig_bin],
+                                   amp[2 + sig_bin : 2 + hi]])
+            arrow_top = adj.min() if len(adj) > 0 else amp[1:].min()
+            ax.annotate('', xy=(fsig, arrow_top), xytext=(fsig, amp[1:].min()),
+                        arrowprops=dict(arrowstyle='->', color='k', lw=1.5,
+                                        mutation_scale=14))
             ax.set_xscale('log')
             ax.set_xlabel('f (Hz)')
-            ax.set_ylabel(labels[idx])
+            suffix = ' (resid)' if self.psa_show_resid else ''
+            ax.set_ylabel(labels[idx] + suffix)
         for row in range(2):
             for col in range(2):
                 self.psaplots[row, col].canvas.draw()
@@ -978,6 +1008,24 @@ class MainWindow(QMainWindow):
         for j in range(2):
             for i in range(2):
                 self.rawplots[i, j].canvas.draw()
+
+    def plotresid(self):
+        if self.rSet.ts <= 0:
+            return
+        colors = ['r', 'g', 'b', 'm']
+        labels = ['Ch1 (V1)', 'Ch2 (V2)', 'Ch3 (V3)', 'Ch4 (V4)']
+        plots  = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        for idx, (row, col) in enumerate(plots):
+            ax = self.residplots[row, col].canvas.ax1
+            ax.cla()
+            d = self.rSet.Data[idx]
+            if d.data is not None and d.fv is not None:
+                resid = d.data - d.fv
+                ax.plot(resid, colors[idx] + ',')
+                ax.axhline(0, color='k', linewidth=0.5)
+                ax.set_ylabel(f'residual {labels[idx]}')
+                ax.set_xlabel('sample')
+            self.residplots[row, col].canvas.draw()
 
     def showOutput(self):
         self.output.setText('\n'.join(self.mytext))

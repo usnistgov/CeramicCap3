@@ -47,9 +47,11 @@ class Meas(QObject):
     dataSetReady = pyqtSignal(CustomData.FourChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000):
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, switching=True, chunk_periods=0):
         self.bdraw = rawdatadir
         self.saverawdata = saverawdata
+        self.switching = switching
+        self.chunk_periods = chunk_periods
         super().__init__()
         self.NDpts = NDpts
         self.Npts = 2*NDpts
@@ -63,6 +65,7 @@ class Meas(QObject):
         self.fsamp = fsamp
         self.nsamp = nsamp
         self.V1_setpoints = None
+        self._relay_pos = -1   # tracks last commanded relay position to avoid redundant switches
         self.rm = pyvisa.ResourceManager()
         self.sg1 = self.rm.open_resource(SG1_ADDR)
         self.dvm = self.rm.open_resource(DVM_ADDR)
@@ -105,13 +108,16 @@ class Meas(QObject):
         if self.co == 0:
             self.logMessage.emit("V1= {0:8.3f}  V2={1:8.3f} dV1={2:8.3f}  f={3:5.1f} kHz".format(
                 self.V1c, self.V2c, self.dV1, self.fsig/1000))
-        if self.co % 2 == 0:
-            self.dvm.write('ROUT:OPEN (@211,248)')
-            self.dvm.write('ROUT:CLOS (@218,241)')
-        else:
-            self.dvm.write('ROUT:OPEN (@218,241)')
-            self.dvm.write('ROUT:CLOS (@211,248)')
-        self._stop_event.wait(1.0)  # let relay contacts settle before driving signal
+        new_pos = (self.co % 2) if self.switching else 0
+        if new_pos != self._relay_pos:
+            if new_pos == 0:
+                self.dvm.write('ROUT:OPEN (@211,248)')
+                self.dvm.write('ROUT:CLOS (@218,241)')
+            else:
+                self.dvm.write('ROUT:OPEN (@218,241)')
+                self.dvm.write('ROUT:CLOS (@211,248)')
+            self._relay_pos = new_pos
+            self._stop_event.wait(1.0)  # let relay contacts settle before driving signal
         if self.V1_setpoints is not None:
             self.V1 = self.V1_setpoints[self.co//2]
         else:
@@ -163,7 +169,8 @@ class Meas(QObject):
         self._stop = False
         self._stop_event.clear()
         self.isidle = False
-        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, g1=self.g1, g2=self.g2, N=self.Npts)
+        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, g1=self.g1, g2=self.g2, N=self.Npts,
+                                       chunk_periods=self.chunk_periods)
         for self.co in range(self.Npts):
             if self._stop:
                 break
@@ -199,7 +206,8 @@ class Meas(QObject):
         self._stop_event.set()  # wake the wait() immediately; ABOR sent by the worker
 
     def getvals(self):
-        if self.co % 2 == 0:
+        relay_pos = (self.co % 2) if self.switching else 0
+        if relay_pos == 0:
             ch2 = self.dvm.query_binary_values('FETCH3? (@101)', datatype='f', is_big_endian=True)
             ch1 = self.dvm.query_binary_values('FETCH3? (@102)', datatype='f', is_big_endian=True)
         else:

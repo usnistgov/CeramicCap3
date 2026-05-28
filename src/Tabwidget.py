@@ -1,12 +1,14 @@
 
 from PyQt5.QtWidgets import (
     QVBoxLayout,
+    QHBoxLayout,
     QGridLayout,
     QWidget,
     QTabWidget,
     QGroupBox,
     QFormLayout,
     QLineEdit,
+    QPushButton,
 )
 
 class MyTabWidget(QWidget):
@@ -17,7 +19,7 @@ class MyTabWidget(QWidget):
         self.master     = QTabWidget()
 
         self.master.resize(300, 200) 
-        self.tablabels=['setup','scatter','raw','PSA','alpha(f)','eta','V1bal','msg','last status','config']
+        self.tablabels=['setup','scatter','raw','resid','PSA','alpha(f)','eta','V1bal','msg','last status','config']
         self.mytabs =[]
         for l in self.tablabels:
             self.mytabs.append(QWidget())
@@ -45,34 +47,48 @@ class MyTabWidget(QWidget):
         self.mytabs[3].setLayout(glayout)
         for i in range(2):
             for j in range(2):
-                glayout.addWidget(parent.psaplots[i,j],i,j)
+                glayout.addWidget(parent.residplots[i,j],i,j)
+        psa_vbox = QVBoxLayout()
+        self.mytabs[4].setLayout(psa_vbox)
+        psa_btn_row = QHBoxLayout()
+        parent.psa_resid_btn = QPushButton('Show: Residuals')
+        psa_btn_row.addWidget(parent.psa_resid_btn)
+        psa_btn_row.addStretch()
+        psa_vbox.addLayout(psa_btn_row)
+        psa_grid_widget = QWidget()
+        psa_grid = QGridLayout(psa_grid_widget)
+        psa_grid.setContentsMargins(0, 0, 0, 0)
+        for i in range(2):
+            for j in range(2):
+                psa_grid.addWidget(parent.psaplots[i, j], i, j)
+        psa_vbox.addWidget(psa_grid_widget)
         glayout =  QGridLayout()
-        self.mytabs[4].setLayout(glayout)
+        self.mytabs[5].setLayout(glayout)
         for i in range(2):
             for j in range(2):
                 glayout.addWidget(parent.alphafplots[i,j],i,j)
 
         glayout =  QGridLayout()
-        self.mytabs[5].setLayout(glayout)
+        self.mytabs[6].setLayout(glayout)
         for j in range(2):
             glayout.addWidget(parent.etaplots[0,j],0,j)
 
         glayout =  QGridLayout()
-        self.mytabs[6].setLayout(glayout)
+        self.mytabs[7].setLayout(glayout)
         for i in range(2):
             for j in range(2):
                 glayout.addWidget(parent.balanceplots[i,j],i,j)
 
         glayout =  QGridLayout()
-        self.mytabs[7].setLayout(glayout)
+        self.mytabs[8].setLayout(glayout)
         glayout.addWidget(parent.output,0,0)
 
         glayout =  QGridLayout()
-        self.mytabs[8].setLayout(glayout)
+        self.mytabs[9].setLayout(glayout)
         glayout.addWidget(parent.mstatus,0,0)
 
         glayout =  QGridLayout()
-        self.mytabs[9].setLayout(glayout)
+        self.mytabs[10].setLayout(glayout)
         glayout.addWidget(parent.config_editor, 0, 0)
 
         gains_box = QGroupBox('Computed gains (read-only)')
