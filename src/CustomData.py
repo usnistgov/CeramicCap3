@@ -3,7 +3,7 @@ import scipy.optimize
 
 
 
-def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True, chunk_periods=0):
+def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True, chunk_periods=0, cache=None):
     """
     Fits a sine wave with a DC offset to the data.
 
@@ -14,90 +14,93 @@ def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True, chunk_period
          amplitudes is returned as a 5th element so that eta ratios can be computed
          per chunk before averaging (avoiding amplitude-averaging bias).
 
+    When cache= is supplied (from build_fit_cache), the design-matrix construction and
+    inversion are skipped; each call reduces to a matrix–vector multiply.
+
     Returns:
         4-tuple (complex_amp, fit_vals, errv, rss)                   when chunk_periods == 0
         5-tuple (complex_amp, fit_vals, errv, rss, chunk_amps)       when chunking succeeds
     """
     y = np.asarray(y, dtype=float)
     n = len(y)
+    n_chunk_params = 5  # DC, cos(wt), sin(wt), cos(wt/2), sin(wt/2)
 
-    rf  = fsig  / fsamp
-    rlf = fline / fsamp
-
-    wt  = 2 * np.pi * np.arange(n) * rf
-    wlf = 2 * np.pi * np.arange(n) * rlf
-
-    cols = [np.ones(n), np.cos(wt), np.sin(wt),
-            np.cos(wt / 2), np.sin(wt / 2),          # fsig/2 DDS spur — absorbed, discarded
-            np.cos(wlf), np.sin(wlf), np.cos(2*wlf), np.sin(2*wlf)]
-    for h in range(2, Nhars + 1):
-        cols.extend([np.cos(h * wt), np.sin(h * wt)])
-
-    # If any line harmonic falls within fline/2 of fsig, add it explicitly so it
-    # doesn't leak into the signal estimate (e.g. 42×60=2520 Hz near 2512 Hz).
-    n_extra_line = 0
-    n_nearest = int(round(fsig / fline))
-    for nh in range(max(3, n_nearest - 2), n_nearest + 3):
-        fn = nh * fline
-        if fsamp / n < abs(fn - fsig) < fline / 2:   # close but distinguishable
-            wnh = 2 * np.pi * np.arange(n) * fn / fsamp
-            cols.extend([np.cos(wnh), np.sin(wnh)])
-            n_extra_line += 2
-
-    X = np.column_stack(cols)
-
-    n_params = 1 + 2 * Nhars + 4 + 2 + n_extra_line  # DC + signal harmonics + line harmonics + fsig/2 + nearby line
-    ndf = n - n_params
-
-    if use_hann:
-        w = np.hanning(n)
+    if cache is not None:
+        X, w, bg_pinv, rf = cache['X'], cache['w'], cache['bg_pinv'], cache['rf']
+        fit_pars   = bg_pinv @ (y * w)
+        use_chunks = 'chunk_pinvs' in cache
+    else:
+        rf  = fsig  / fsamp
+        rlf = fline / fsamp
+        wt  = 2 * np.pi * np.arange(n) * rf
+        wlf = 2 * np.pi * np.arange(n) * rlf
+        cols = [np.ones(n), np.cos(wt), np.sin(wt),
+                np.cos(wt / 2), np.sin(wt / 2),
+                np.cos(wlf), np.sin(wlf), np.cos(2*wlf), np.sin(2*wlf)]
+        for h in range(2, Nhars + 1):
+            cols.extend([np.cos(h * wt), np.sin(h * wt)])
+        # If any line harmonic falls within fline/2 of fsig, add it explicitly so it
+        # doesn't leak into the signal estimate (e.g. 42×60=2520 Hz near 2512 Hz).
+        n_extra_line = 0
+        n_nearest = int(round(fsig / fline))
+        for nh in range(max(3, n_nearest - 2), n_nearest + 3):
+            fn = nh * fline
+            if fsamp / n < abs(fn - fsig) < fline / 2:
+                wnh = 2 * np.pi * np.arange(n) * fn / fsamp
+                cols.extend([np.cos(wnh), np.sin(wnh)])
+                n_extra_line += 2
+        X = np.column_stack(cols)
+        w = np.hanning(n) if use_hann else np.ones(n)
         X_eff = X * w[:, np.newaxis]
         y_eff = y * w
-    else:
-        X_eff = X
-        y_eff = y
+        fit_pars, lstsq_res, _, _ = np.linalg.lstsq(X_eff, y_eff, rcond=None)
+        chunk_size = int(round(chunk_periods * fsamp / fsig)) if chunk_periods > 0 else 0
+        use_chunks = chunk_size > n_chunk_params + 1 and n // chunk_size >= 2
 
-    fit_pars, lstsq_res, _, _ = np.linalg.lstsq(X_eff, y_eff, rcond=None)
-
-    # Check whether per-chunk fitting is feasible
-    n_chunk_params = 5  # DC, cos(wt), sin(wt), cos(wt/2), sin(wt/2)
-    chunk_size = int(round(chunk_periods * fsamp / fsig)) if chunk_periods > 0 else 0
-    use_chunks = chunk_size > n_chunk_params + 1 and n // chunk_size >= 2
+    fit_vals = X @ fit_pars
+    rss  = float(np.sum((w * (y - fit_vals)) ** 2))
+    ndf  = n - X.shape[1]
+    errv = np.sqrt(rss / ndf) if ndf > 0 else 0.0
 
     if not use_chunks:
-        fit_vals = X @ fit_pars
-        rss = float(lstsq_res[0]) if len(lstsq_res) == 1 else float(np.sum((y_eff - X_eff @ fit_pars) ** 2))
-        errv = np.sqrt(rss / ndf) if ndf > 0 else 0.0
         return fit_pars[1] - 1j * fit_pars[2], fit_vals, errv, rss
 
     # Stage 1: remove background (DC, line harmonics, f/2) leaving signal only
-    bg_pars = fit_pars.copy()
-    bg_pars[1] = 0.0   # zero cos(wt) fundamental
-    bg_pars[2] = 0.0   # zero sin(wt) fundamental
-    y_bg  = X @ bg_pars       # DC + line + f/2 + higher harmonics
-    y_sig = y - y_bg           # signal-only residual, full record
+    bg_pars    = fit_pars.copy()
+    bg_pars[1] = 0.0
+    bg_pars[2] = 0.0
+    y_bg  = X @ bg_pars
+    y_sig = y - y_bg
 
-    # Stage 2: fit per-chunk amplitudes
-    n_chunks = n // chunk_size
+    # Stage 2: per-chunk amplitudes
+    if cache is not None:
+        n_chunks    = cache['n_chunks']
+        chunk_size  = cache['chunk_size']
+        chunk_pinvs = cache['chunk_pinvs']
+    else:
+        n_chunks    = n // chunk_size
+        chunk_pinvs = None
+
     chunk_amps = np.zeros(n_chunks, dtype=complex)
     fit_sig    = np.zeros(n, dtype=float)
     rss_total  = 0.0
     ndf_total  = 0
 
     for k in range(n_chunks):
-        i0  = k * chunk_size
-        i1  = i0 + chunk_size
-        idx = np.arange(i0, i1)
-        wtc = 2 * np.pi * idx * rf
-        Xc  = np.column_stack([np.ones(chunk_size),
-                                np.cos(wtc), np.sin(wtc),
-                                np.cos(wtc / 2), np.sin(wtc / 2)])
+        i0 = k * chunk_size
+        i1 = i0 + chunk_size
         yc = y_sig[i0:i1]
-        if use_hann:
-            wc = np.hanning(chunk_size)
-            pars_c, _, _, _ = np.linalg.lstsq(Xc * wc[:, np.newaxis], yc * wc, rcond=None)
+        if chunk_pinvs is not None:
+            pinv_c, wc, Xc = chunk_pinvs[k]
+            pars_c = pinv_c @ (yc * wc)
         else:
-            pars_c, _, _, _ = np.linalg.lstsq(Xc, yc, rcond=None)
+            idx = np.arange(i0, i1)
+            wtc = 2 * np.pi * idx * rf
+            Xc  = np.column_stack([np.ones(chunk_size),
+                                    np.cos(wtc), np.sin(wtc),
+                                    np.cos(wtc / 2), np.sin(wtc / 2)])
+            wc = np.hanning(chunk_size) if use_hann else np.ones(chunk_size)
+            pars_c, _, _, _ = np.linalg.lstsq(Xc * wc[:, np.newaxis], yc * wc, rcond=None)
         chunk_amps[k] = pars_c[1] - 1j * pars_c[2]
         fit_sig[i0:i1] = Xc @ pars_c
         rss_total += float(np.sum((yc - Xc @ pars_c) ** 2))
@@ -113,7 +116,6 @@ def fit_sine_cplx(y, fsamp, fsig, fline=60, Nhars=1, use_hann=True, chunk_period
     complex_amp = np.mean(chunk_amps)
     fit_vals    = y_bg + fit_sig
     errv        = np.sqrt(rss_total / ndf_total) if ndf_total > 0 else 0.0
-
     return complex_amp, fit_vals, errv, rss_total, chunk_amps
 
 
@@ -144,6 +146,61 @@ def get_f(y, fsamp, fsig_guess, fline_guess=60.0, use_hann=True, Nhars=1):
     return best_fsig, res_line.x
 
 
+def build_fit_cache(fsamp, fsig, fline, n, Nhars, use_hann=True, chunk_periods=0):
+    """Precompute fit matrices for repeated calls at the same frequency and sample count.
+
+    Builds the full design matrix X, the Hanning window w, and the pseudoinverse
+    pinv(X * w[:, None]).  When chunk_periods > 0, also precomputes the per-chunk
+    pseudoinverses so Stage-2 fits reduce to matrix–vector multiplies.
+
+    Pass the returned dict as cache= to fit_sine_cplx.
+    """
+    rf  = fsig  / fsamp
+    rlf = fline / fsamp
+    wt  = 2 * np.pi * np.arange(n) * rf
+    wlf = 2 * np.pi * np.arange(n) * rlf
+
+    cols = [np.ones(n), np.cos(wt), np.sin(wt),
+            np.cos(wt / 2), np.sin(wt / 2),
+            np.cos(wlf), np.sin(wlf), np.cos(2*wlf), np.sin(2*wlf)]
+    for h in range(2, Nhars + 1):
+        cols.extend([np.cos(h * wt), np.sin(h * wt)])
+
+    n_nearest = int(round(fsig / fline))
+    for nh in range(max(3, n_nearest - 2), n_nearest + 3):
+        fn = nh * fline
+        if fsamp / n < abs(fn - fsig) < fline / 2:
+            wnh = 2 * np.pi * np.arange(n) * fn / fsamp
+            cols.extend([np.cos(wnh), np.sin(wnh)])
+
+    X = np.column_stack(cols)
+    w = np.hanning(n) if use_hann else np.ones(n)
+    bg_pinv = np.linalg.pinv(X * w[:, np.newaxis])
+
+    cache = {'X': X, 'w': w, 'bg_pinv': bg_pinv, 'rf': rf}
+
+    n_chunk_params = 5
+    chunk_size = int(round(chunk_periods * fsamp / fsig)) if chunk_periods > 0 else 0
+    if chunk_size > n_chunk_params + 1 and n // chunk_size >= 2:
+        n_chunks    = n // chunk_size
+        chunk_pinvs = []
+        for k in range(n_chunks):
+            i0  = k * chunk_size
+            i1  = i0 + chunk_size
+            idx = np.arange(i0, i1)
+            wtc = 2 * np.pi * idx * rf
+            Xc  = np.column_stack([np.ones(chunk_size),
+                                    np.cos(wtc), np.sin(wtc),
+                                    np.cos(wtc / 2), np.sin(wtc / 2)])
+            wc = np.hanning(chunk_size) if use_hann else np.ones(chunk_size)
+            chunk_pinvs.append((np.linalg.pinv(Xc * wc[:, np.newaxis]), wc, Xc))
+        cache['chunk_pinvs'] = chunk_pinvs
+        cache['chunk_size']  = chunk_size
+        cache['n_chunks']    = n_chunks
+
+    return cache
+
+
 class SampleData:
     def __init__(self, fsig, fsamp, data, Nhars=1, chunk_periods=0):
         self.data          = np.array(data)
@@ -158,12 +215,12 @@ class SampleData:
         self.fsig, self.fline = fsig, fline
 
     def findf(self):
-        self.fsig, self.fline = get_f(self.data, self.fsamp, self.fsig, self.fline, Nhars=self.Nhars)
+        self.fsig, self.fline = get_f(self.data, self.fsamp, self.fsig, self.fline, Nhars=1)
         return self.fsig, self.fline
 
-    def fit(self):
+    def fit(self, cache=None):
         result = fit_sine_cplx(self.data, self.fsamp, self.fsig, self.fline,
-                                self.Nhars, True, self.chunk_periods)
+                                self.Nhars, True, self.chunk_periods, cache=cache)
         self.Vc        = result[0]
         self.fv        = result[1]
         self.c2        = result[3]
@@ -176,7 +233,7 @@ class SampleData:
 
 class FourChannels:
     def __init__(self, fsig, fsamp, Nhars, ch1, ch2, ch3, ch4, V1c, V2c, i, ts,
-                 chunk_periods=0):
+                 chunk_periods=0, fit_cache=None):
         self.ts            = ts
         self.fsig          = fsig
         self.fsamp         = fsamp
@@ -191,13 +248,29 @@ class FourChannels:
         self.Data.append(SampleData(fsig, fsamp, ch2, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch3, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch4, Nhars, chunk_periods))
-        fsig, fline = self.Data[0].findf()
-        # Clamp Nhars so no harmonic exceeds Nyquist (0.45 * fsamp as margin)
-        nhars_used = max(1, min(Nhars, int(0.45 * fsamp / fsig)))
-        for i in range(4):
-            self.Data[i].Nhars = nhars_used
-            self.Data[i].setf(fsig, fline)
-            self.Data[i].fit()
+
+        if fit_cache is not None and 'fsig' in fit_cache:
+            # Reuse frequency and precomputed matrices from earlier point at same frequency
+            fsig_r       = fit_cache['fsig']
+            fline        = fit_cache['fline']
+            nhars_used   = fit_cache['nhars_used']
+            matrix_cache = fit_cache['matrix_cache']
+        else:
+            # First point: determine frequency and build matrices
+            fsig_r, fline = self.Data[0].findf()
+            nhars_used = max(1, min(Nhars, int(0.45 * fsamp / fsig_r)))
+            matrix_cache = build_fit_cache(fsamp, fsig_r, fline, len(ch1), nhars_used,
+                                           use_hann=True, chunk_periods=chunk_periods)
+            if fit_cache is not None:
+                fit_cache['fsig']         = fsig_r
+                fit_cache['fline']        = fline
+                fit_cache['nhars_used']   = nhars_used
+                fit_cache['matrix_cache'] = matrix_cache
+
+        for d in self.Data:
+            d.Nhars = nhars_used
+            d.setf(fsig_r, fline)
+            d.fit(cache=matrix_cache)
 
         # Build per-chunk phasor matrix (n_chunks × 4): rotate each chunk by ch0's phase
         chunks0 = self.Data[0].Vc_chunks
@@ -218,6 +291,7 @@ class NPoints:
     def __init__(self, fsig, fsamp, Nhars=1, g1=1, g2=1, ratio=10, N=8, chunk_periods=0):
         self.N             = N
         self.chunk_periods = chunk_periods
+        self._fit_cache    = {}   # populated on first setPoint; reused for all points at this frequency
         self.Res = {}
         self.Res['fsig']  = fsig
         self.Res['ratio'] = ratio
@@ -235,6 +309,7 @@ class NPoints:
             self.Res['fsig'], self.Res['fsamp'], self.Res['Nhars'],
             ch1, ch2, ch3, ch4, V1c, V2c, i, ts,
             chunk_periods=self.chunk_periods,
+            fit_cache=self._fit_cache,
         )
         self.ats[i] = ts
         if min(self.ats) > 0:

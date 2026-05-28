@@ -47,7 +47,7 @@ class Meas(QObject):
     dataSetReady = pyqtSignal(CustomData.FourChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, switching=True, chunk_periods=0, max_nhars=10):
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, switching=True, chunk_periods=0, max_nhars=10, v4_range=10):
         self.bdraw = rawdatadir
         self.saverawdata = saverawdata
         self.switching = switching
@@ -66,6 +66,9 @@ class Meas(QObject):
         self.nsamp = nsamp
         self.V1_setpoints = None
         self._relay_pos = -1   # tracks last commanded relay position to avoid redundant switches
+        self.ch3_range = 0.3            # current DVM range for ch103; bumped on overflow
+        self._ch3_range_pending = False # set when range changed; triggers reconfigure in prepForMeas
+        self.v4_range = v4_range        # DAQ voltage range for ch104 (V4); normally 10 V, 100 V if needed
         self.rm = pyvisa.ResourceManager()
         self.sg1 = self.rm.open_resource(SG1_ADDR)
         self.dvm = self.rm.open_resource(DVM_ADDR)
@@ -79,7 +82,9 @@ class Meas(QObject):
         self.sg1.write('SOUR2:FUNC SIN')
         self.dvm.timeout = 25000
         self.dvm.write('FORM3 REAL')
-        self.dvm.write('ACQ3:VOLT 10,(@101:104)')
+        self.dvm.write('ACQ3:VOLT 10,(@101,102)')
+        self.dvm.write(f'ACQ3:VOLT {self.v4_range},(@104)')
+        self.dvm.write('ACQ3:VOLT 0.3,(@103)')
         self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
         self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
         self.dvm.write('INP3:COUP AC,(@101:104)')
@@ -108,6 +113,11 @@ class Meas(QObject):
         if self.co == 0:
             self.logMessage.emit("V1= {0:8.3f}  V2={1:8.3f} dV1={2:8.3f}  f={3:5.1f} kHz".format(
                 self.V1c, self.V2c, self.dV1, self.fsig/1000))
+        if self._ch3_range_pending:
+            self.dvm.write(f'ACQ3:VOLT {self.ch3_range},(@103)')
+            self.dvm.write('SAMP3:RATE {0:8.2f},(@103)'.format(self.fsamp))
+            self.dvm.write('SAMP3:COUN {0},(@103)'.format(self.nsamp))
+            self._ch3_range_pending = False
         new_pos = (self.co % 2) if self.switching else 0
         if new_pos != self._relay_pos:
             if new_pos == 0:
@@ -205,6 +215,8 @@ class Meas(QObject):
         self._stop = True
         self._stop_event.set()  # wake the wait() immediately; ABOR sent by the worker
 
+    _CH3_RANGES = [0.3, 3.0, 10.0]
+
     def getvals(self):
         relay_pos = (self.co % 2) if self.switching else 0
         if relay_pos == 0:
@@ -215,6 +227,15 @@ class Meas(QObject):
             ch2 = self.dvm.query_binary_values('FETCH3? (@102)', datatype='f', is_big_endian=True)
         ch3 = self.dvm.query_binary_values('FETCH3? (@103)', datatype='f', is_big_endian=True)
         ch4 = self.dvm.query_binary_values('FETCH3? (@104)', datatype='f', is_big_endian=True)
+
+        # Auto-range ch3: if overflowed, bump range so next point acquires at the larger range
+        ch3_arr = np.asarray(ch3)
+        if np.max(np.abs(ch3_arr)) > 0.9 * self.ch3_range:
+            idx = self._CH3_RANGES.index(self.ch3_range)
+            if idx < len(self._CH3_RANGES) - 1:
+                self.ch3_range = self._CH3_RANGES[idx + 1]
+                self._ch3_range_pending = True
+                self.logMessage.emit(f'ch3 overflow -> bumping range to {self.ch3_range} V')
         if self.saverawdata:
             now = datetime.datetime.now()
             timestamp = now.strftime("%Y%m%d_%H%M%S")

@@ -26,7 +26,6 @@ class CCC():
         self.rawdatadir = self.meas['RAWDATADIR']
         self.saverawdata = self.cp['MEAS'].getboolean('saverawdata', fallback=False)
         self.nwarmup = int(self.meas.get('NWARMUP', '2'))
-        self.fixg1 = self.cp['MEAS'].getboolean('fixg1', fallback=False)
         self.fixg2 = self.cp['MEAS'].getboolean('fixg2', fallback=False)
         self.sat_threshold = float(self.meas.get('SATTHRESHOLD', '10.0'))
         self.switching = self.cp['MEAS'].getboolean('switching', fallback=True)

@@ -83,29 +83,20 @@ class CircuitSetupWidget(QWidget):
         grid.setSpacing(10)
 
         self.schematic = PDFCanvas(PNG_PATH)
-        grid.addWidget(self.schematic, 0, 1, 2, 1)
-
-        self._gb31, self.cb31_val, self.cb31_sn = self._cap_group('Top-Left  Y₃₁', top=True)
-        self._gb32, self.cb32_val, self.cb32_sn = self._cap_group('Bot-Left  Y₃₂', top=False)
-        grid.addWidget(self._gb31, 0, 0, Qt.AlignTop)
-        grid.addWidget(self._gb32, 1, 0, Qt.AlignBottom)
+        grid.addWidget(self.schematic, 0, 0, 2, 1)
 
         self._gb41, self.cb41_val, self.cb41_sn = self._cap_group('Top-Right  Y₄₁', top=True)
         self._gb42, self.cb42_val, self.cb42_sn = self._cap_group('Bot-Right  Y₄₂', top=False)
-        grid.addWidget(self._gb41, 0, 2, Qt.AlignTop)
-        grid.addWidget(self._gb42, 1, 2, Qt.AlignBottom)
+        grid.addWidget(self._gb41, 0, 1, Qt.AlignTop)
+        grid.addWidget(self._gb42, 1, 1, Qt.AlignBottom)
 
         outer.addWidget(mid)
 
         # 10:1 constraint — skip sync if target index is disabled by category filter
-        self.cb31_val.currentIndexChanged.connect(lambda i: self._sync(self.cb32_val, i))
-        self.cb32_val.currentIndexChanged.connect(lambda i: self._sync(self.cb31_val, i))
         self.cb41_val.currentIndexChanged.connect(lambda i: self._sync(self.cb42_val, i))
         self.cb42_val.currentIndexChanged.connect(lambda i: self._sync(self.cb41_val, i))
 
         # Category filter updates when SN changes
-        self.cb31_sn.currentTextChanged.connect(lambda t: self._update_filter(self.cb31_val, t, True))
-        self.cb32_sn.currentTextChanged.connect(lambda t: self._update_filter(self.cb32_val, t, False))
         self.cb41_sn.currentTextChanged.connect(lambda t: self._update_filter(self.cb41_val, t, True))
         self.cb42_sn.currentTextChanged.connect(lambda t: self._update_filter(self.cb42_val, t, False))
 
@@ -228,7 +219,7 @@ class CircuitSetupWidget(QWidget):
         self._sn_categories = sn_categories
         self._cat_serials = cat_serials
 
-        for cb in (self.cb31_sn, self.cb32_sn, self.cb41_sn, self.cb42_sn):
+        for cb in (self.cb41_sn, self.cb42_sn):
             cb.blockSignals(True)
             cb.clear()
             for sn in all_sns:
@@ -237,9 +228,7 @@ class CircuitSetupWidget(QWidget):
 
         # Capacitance values (set before SNs so filter has the right starting point)
         for cfg_key, combo, is_top in [
-            ('topleft',     self.cb31_val, True),
             ('topright',    self.cb41_val, True),
-            ('bottomleft',  self.cb32_val, False),
             ('bottomright', self.cb42_val, False),
         ]:
             raw = active.get(cfg_key, '').upper().replace(' ', '')
@@ -253,9 +242,7 @@ class CircuitSetupWidget(QWidget):
 
         # Serial numbers + apply initial category filter
         for cfg_key, sn_combo, val_combo, is_top in [
-            ('sntopleft',    self.cb31_sn, self.cb31_val, True),
             ('sntopright',   self.cb41_sn, self.cb41_val, True),
-            ('snbottomleft', self.cb32_sn, self.cb32_val, False),
             ('snbottomright',self.cb42_sn, self.cb42_val, False),
         ]:
             sn = active.get(cfg_key, '')
@@ -269,8 +256,6 @@ class CircuitSetupWidget(QWidget):
     def save_config(self):
         """Write selections to [CONFIG] and assign any new SNs to their category section."""
         positions = [
-            ('topleft',     'sntopleft',    self.cb31_val, self.cb31_sn, True),
-            ('bottomleft',  'snbottomleft', self.cb32_val, self.cb32_sn, False),
             ('topright',    'sntopright',   self.cb41_val, self.cb41_sn, True),
             ('bottomright', 'snbottomright',self.cb42_val, self.cb42_sn, False),
         ]

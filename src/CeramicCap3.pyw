@@ -65,7 +65,6 @@ class MainWindow(QMainWindow):
         for p   in serial.tools.list_ports.comports():
             if p.description.startswith('TZA/OPM500'):
                 self.tzaport.append(p.device)
-        self.tza1 = TZA.TZA(self.tzaport[1])
         self.tza2 = TZA.TZA(self.tzaport[0])
         self.config = CCConfig.CCC()
         self.thread = QThread()
@@ -74,13 +73,10 @@ class MainWindow(QMainWindow):
         self.V1 = 1.811+2.578j   # small modulated center (SOUR1)
         self.V2 = -9.9+0j        # large constant (SOUR2)
         self.dV = 0.1
-        self.g1 = 10000
         self.g2 = 100
-        self.tza1.set_fgain(self.g1)
         self.tza2.set_fgain(self.g2)
         self.warmup_count = 0
 
-        self.le_fixed_g1 = None
         self.le_fixed_g2 = None
         self.C41_eff = None
         self.fsigold = -1
@@ -174,7 +170,7 @@ class MainWindow(QMainWindow):
         self.sweepProgressBar.setRange(0, 1)
         self.sweepProgressBar.setValue(0)
         self.sweepProgressBar.setFormat('%v / %m freq')
-        self.gainlabel = QLabel("g1=—  g2=—")
+        self.gainlabel = QLabel("g2=—")
         widget.layout().addWidget(self.sblabel)
         widget.layout().addWidget(self.progressBar)
         widget.layout().addWidget(self.freqlabel)
@@ -216,8 +212,6 @@ class MainWindow(QMainWindow):
 
     def parseconfig(self):
         self.config.read()
-        self.C31 = self.config.C31
-        self.C32 = self.config.C32
         old_C41  = getattr(self, 'C41',  None)
         old_C42  = getattr(self, 'C42',  None)
         old_SN41 = getattr(self, 'SN41', None)
@@ -229,16 +223,14 @@ class MainWindow(QMainWindow):
             self.myprint('=' * 56)
             self.myprint(desc)
             self.myprint('=' * 56)
-        self.myprint("Measuring C31={0:3.0e} C32= {1:3.0e} & C41={2:3.0e} C42={3:3.0e}".format(self.C31, self.C32, self.C41, self.C42))
+        self.myprint("Measuring C41={0:3.0e} C42={1:3.0e}".format(self.C41, self.C42))
 
-        self.SN31 = self.config.SN31
-        self.SN32 = self.config.SN32
         self.SN41 = self.config.SN41
         self.SN42 = self.config.SN42
         if self.C41 != old_C41 or self.C42 != old_C42 or self.SN41 != old_SN41 or self.SN42 != old_SN42:
             self.C41_eff = None
 
-        self.myprint("S/N: {0} {1} {2} {3}".format(self.SN31, self.SN32, self.SN41, self.SN42))
+        self.myprint("S/N: {0} {1}".format(self.SN41, self.SN42))
 
         self.flist = self.config.flist
         if not self.measuring:
@@ -252,21 +244,18 @@ class MainWindow(QMainWindow):
         self.rawdatadir  = self.config.rawdatadir
         self.saverawdata = self.config.saverawdata
         self.nwarmup = self.config.nwarmup
-        self.fixg1 = self.config.fixg1
         self.fixg2 = self.config.fixg2
         self._SAT_THRESHOLD = self.config.sat_threshold
         self.switching = self.config.switching
-        self.fixed_g1 = R2FMath.mingainvalue1(self.flist, self.C31, self.dV) if self.fixg1 else None
         self.fixed_g2 = R2FMath.mingainvalue2(self.flist, self.C41) if self.fixg2 else None
-        if self.le_fixed_g1 is not None:
-            self.le_fixed_g1.setText(str(int(self.fixed_g1)) if self.fixed_g1 is not None else '— (fixg1 off)')
+        if self.le_fixed_g2 is not None:
             self.le_fixed_g2.setText(str(int(self.fixed_g2)) if self.fixed_g2 is not None else '— (fixg2 off)')
         self.ver = self.config.version
         global _logdir
         _logdir = self.config.logdir
 
     def RBupdate(self):
-        self.gainlabel.setText(f"g1={self.g1}  g2={self.g2}")
+        self.gainlabel.setText(f"g2={self.g2}")
 
     def laUpdate(self):
         pass
@@ -340,49 +329,46 @@ class MainWindow(QMainWindow):
         self.rData = MyData
 
         # Gain adjustment is only permitted during warmup
-        max_v3 = self.rData.max_raw_amplitude(2)
         max_v4 = self.rData.max_raw_amplitude(3)
         in_warmup = self.warmup_count <= self.nwarmup
-        sat3 = in_warmup and (not self.fixg1) and max_v3 > self._SAT_THRESHOLD
-        sat4 = in_warmup and (not self.fixg2) and max_v4 > self._SAT_THRESHOLD
-        if sat3 or sat4:
-            myop=f'r gain {sat3=} {sat4=} {self.g1} {self.g2}'
-            if sat3:
-                self.g1 = self._reduce_gain(self.g1)
-                self.tza1.set_fgain(self.g1)
-            if sat4:
-                self.g2 = self._reduce_gain(self.g2)
+        sat_threshold = self._SAT_THRESHOLD if self.v4_range <= 10 else 0.9 * self.v4_range
+        sat4 = in_warmup and (not self.fixg2) and max_v4 > sat_threshold
+        if sat4:
+            new_g2 = self._reduce_gain(self.g2)
+            if new_g2 < self.g2:
+                self.g2 = new_g2
                 self.tza2.set_fgain(self.g2)
-            myop+=f'to {self.g1} {self.g2}'
-            self.myprint(myop)
-            parts = []
-            if sat3: parts.append(f'V3 → g1={self.g1}')
-            if sat4: parts.append(f'V4 → g2={self.g2}')
-            self.statusBar.showMessage(f'⚠  Saturation: {", ".join(parts)} — gain reduced', 4000)
-            self.RBupdate()
-            self.warmup_count = 0
-            self.meta_V1rb = []
-            self.meta_eta4 = []
-            old_rData.strip_raw()
-            return  # discard saturated measurement; next goagain() uses the reduced gain
+                self.myprint(f'r gain {self.g2}')
+                self.statusBar.showMessage(f'Saturation: V4 -> g2={self.g2} — gain reduced', 4000)
+                self.RBupdate()
+                self.warmup_count = 0
+                self.meta_V1rb = []
+                self.meta_eta4 = []
+                old_rData.strip_raw()
+                return  # discard saturated measurement; next goagain() uses the reduced gain
+            # Already at minimum gain — try increasing the DAQ range before proceeding
+            _V4_RANGES = [10, 100]
+            try:
+                vi = _V4_RANGES.index(self.v4_range)
+                if vi < len(_V4_RANGES) - 1:
+                    self.v4_range = _V4_RANGES[vi + 1]
+                    self.myprint(f'V4 saturated at g2=1 — DAQ range -> {self.v4_range} V')
+                    self.warmup_count = 0
+                    self.meta_V1rb = []
+                    self.meta_eta4 = []
+                    old_rData.strip_raw()
+                    return
+            except ValueError:
+                pass
+            self.myprint(f'V4 saturated at minimum gain and maximum DAQ range — proceeding')
 
-        # Low-signal check: if V3 or V4 is tiny during warmup, boost gain one decade
-        low3 = in_warmup and (not self.fixg1) and max_v3 < self._SAT_THRESHOLD / 20 and self.g1 < 100000
+        # Low-signal check: if V4 is tiny during warmup, boost gain one decade
         low4 = in_warmup and (not self.fixg2) and max_v4 < self._SAT_THRESHOLD / 20 and self.g2 < 100000
-        if low3 or low4:
-            myop = f'i gain {low3=} {low4=} {self.g1} {self.g2}'
-            if low3:
-                self.g1 = min(100000, self.g1 * 10)
-                self.tza1.set_fgain(self.g1)
-            if low4:
-                self.g2 = min(100000, self.g2 * 10)
-                self.tza2.set_fgain(self.g2)
-            myop += f' to {self.g1} {self.g2}'
-            self.myprint(myop)
-            parts = []
-            if low3: parts.append(f'V3 → g1={self.g1}')
-            if low4: parts.append(f'V4 → g2={self.g2}')
-            self.statusBar.showMessage(f'↑  Low signal: {", ".join(parts)} — gain increased', 4000)
+        if low4:
+            self.g2 = min(100000, self.g2 * 10)
+            self.tza2.set_fgain(self.g2)
+            self.myprint(f'i gain {self.g2}')
+            self.statusBar.showMessage(f'Low signal: V4 -> g2={self.g2} — gain increased', 4000)
             self.RBupdate()
             self.warmup_count = 0
             self.meta_V1rb = []
@@ -472,6 +458,7 @@ class MainWindow(QMainWindow):
         self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
         self.warmup_count = 0
+        self.v4_range = 10
         self.progressBar.setValue(0)
         self.run_start_time = time.time()
         self.freqs_done = 0
@@ -496,66 +483,35 @@ class MainWindow(QMainWindow):
             self.close()
         elif self.measuring:
             self.thread = QThread()
-            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp, switching=self.switching, chunk_periods=10, max_nhars=self.config.max_nhars)
+            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp, switching=self.switching, chunk_periods=10, max_nhars=self.config.max_nhars, v4_range=self.v4_range)
             self.mydvm.moveToThread(self.thread)
-            self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
             if self.fsigold == self.fsig:
                 while np.abs(self.V1) > 9:
                     self.V1 = self.V1*0.9
                     self.V2 = self.V2*0.9
-                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
+                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, 1, self.g2)
             else:
                 self.myprint(f"  {self.fsig/1000:.4g} kHz  ".center(56, '-'))
-                tempgain1 = R2FMath.newgainvalue1(self.fsig, self.C31, dV= self.dV,Vmax=3)
                 tempgain2 = R2FMath.newgainvalue2(self.fsig, self.C41, dV= self.dV,Vmax=3)
-
-                self.g1 = self.fixed_g1 if self.fixg1 else tempgain1
                 self.g2 = self.fixed_g2 if self.fixg2 else tempgain2
-                #self.g1 = 1
-                #self.g2 = 1
                 C41_used = self.C41_eff if self.C41_eff is not None else self.C41
-                self.myprint(f'getgain {self.C31=:.1e} C41_used={C41_used:.3e} (nom {self.C41:.1e}) {tempgain1=} {tempgain2=} {self.g1} {self.g2}')
-                self.config.setGains(self.g1, self.g2)
-                self.tza1.set_fgain(self.g1)
+                self.myprint(f'getgain C41_used={C41_used:.3e} (nom {self.C41:.1e}) {tempgain2=} {self.g2}')
+                self.config.setGains(1, self.g2)
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
                 self.warmup_count = 0
                 self.sblabel.setText(f"warming up at {self.fsig/1000:5.2f} kHz")
                 self.meta_V1rb = []
                 self.meta_eta4 = []
-                V1_balance_prev = self.V1   # measured balance from previous frequency
-                V2_prev        = self.V2   # V2 that was used at previous frequency
                 self.V2 = -9.9+0j
-                V1_model_next = self.calcVsmall(self.fsig, V2=self.V2)
-                if self.fsigold > 0:
-                    # Apply a multiplicative correction derived from the previous
-                    # frequency: ratio = measured / model(f_prev).  Multiplying
-                    # model(f_next) by this ratio corrects for parasitics without
-                    # assuming the balance is identical across a large frequency jump.
-                    V1_model_prev = self.calcVsmall(self.fsigold, V2=V2_prev)
-                    if abs(V1_model_prev) > 1e-10:
-                        ratio = V1_balance_prev / V1_model_prev
-                        self.V1 = V1_model_next * ratio
-                    else:
-                        self.V1 = V1_model_next
-                else:
-                    self.V1 = V1_model_next
-                # Sanity-check V1 against the plain nominal model (C41, not C41_eff).
-                # If ratio correction or a corrupted C41_eff produced a wildly wrong
-                # V1, fall back to the nominal so V2 is never scaled to zero.
-                iw_nom = 1j * self.fsig * 2 * np.pi
-                I1_nom = self.V2 * iw_nom * self.C42 / (1 + iw_nom * self.C42 * 50)
-                V1_nominal = -I1_nom * (50 + 1 / (iw_nom * self.C41))
-                if abs(V1_nominal) > 1e-10 and abs(self.V1) > 3 * abs(V1_nominal):
-                    self.myprint(f'V1={self.V1:.4f} too far from nominal {V1_nominal:.4f} — using nominal')
-                    self.V1 = V1_nominal
+                self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
                 while np.abs(self.V1) > 9:
                     self.V2 *= 0.9
                     self.V1 *= 0.9
                 self.dV = np.abs(self.V1) * self.dvfrac
                 self.myprint(f'{self.V1=:.5f} {self.V2=:.5f} {self.dV=:.5f}')
-                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g1, self.g2)
+                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, 1, self.g2)
             self.laUpdate()
             self.mydvm.logMessage.connect(self.myprint)
             self.mydvm.dataReady.connect(self.onNewData)
@@ -702,10 +658,11 @@ class MainWindow(QMainWindow):
             eta2 = V2/V1
             eta3 = V3/V1
             eta4 = V4/V1
-            self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1),  np.imag(V1), 'r+')
-            self.scatterplots[0, 1].canvas.ax1.plot(np.real(eta2), np.imag(eta2), 'g+')
-            self.scatterplots[1, 0].canvas.ax1.plot(np.real(eta3), np.imag(eta3), 'b+')
-            self.scatterplots[1, 1].canvas.ax1.plot(np.real(eta4), np.imag(eta4), 'm+')
+            for sl, mk in [(slice(None, None, 2), '+'), (slice(1, None, 2), 'x')]:
+                self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1[sl]),    np.imag(V1[sl]),    'r' + mk)
+                self.scatterplots[0, 1].canvas.ax1.plot(np.real(eta2[sl]),  np.imag(eta2[sl]),  'g' + mk)
+                self.scatterplots[1, 0].canvas.ax1.plot(np.real(eta3[sl]),  np.imag(eta3[sl]),  'b' + mk)
+                self.scatterplots[1, 1].canvas.ax1.plot(np.real(eta4[sl]),  np.imag(eta4[sl]),  'm' + mk)
         elif self.rData.Res['ts'] > 0:
             V1 = self.rData.ave4[:, 0]
             V2 = self.rData.ave4[:, 1]
@@ -714,11 +671,11 @@ class MainWindow(QMainWindow):
             eta2 = V2/V1
             eta3 = V3/V1
             eta4 = V4/V1
-                #ell = R2FMath.ComplexEllipse.fit_from_cmplx_points(ratio)
-            self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1),  np.imag(V1), 'ro')
-            self.scatterplots[0, 1].canvas.ax1.plot(np.real(eta2), np.imag(eta2), 'go')
-            self.scatterplots[1, 0].canvas.ax1.plot(np.real(eta3), np.imag(eta3), 'bo')
-            self.scatterplots[1, 1].canvas.ax1.plot(np.real(eta4), np.imag(eta4), 'mo')
+            for sl, mk in [(slice(None, None, 2), 'o'), (slice(1, None, 2), 's')]:
+                self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1[sl]),    np.imag(V1[sl]),    'r' + mk)
+                self.scatterplots[0, 1].canvas.ax1.plot(np.real(eta2[sl]),  np.imag(eta2[sl]),  'g' + mk)
+                self.scatterplots[1, 0].canvas.ax1.plot(np.real(eta3[sl]),  np.imag(eta3[sl]),  'b' + mk)
+                self.scatterplots[1, 1].canvas.ax1.plot(np.real(eta4[sl]),  np.imag(eta4[sl]),  'm' + mk)
 
         for j in range(2):
             for i in range(2):
@@ -754,54 +711,48 @@ class MainWindow(QMainWindow):
             if f_bar:
                 ax.errorbar(f_bar, v_bar, yerr=e_bar, fmt=color + 'o', capsize=3, ms=4)
 
-        from matplotlib.lines import Line2D as _L2D
-        for ax, a_key, d_key, side in [
-            (self.alphafplots[0, 1].canvas.ax1, 'al_right', 'D_right', '₄'),
-        ]:
-            add_scalar(ax, a_key, 'r')
-            add_scalar(ax, d_key, 'b')
-            ax.set_ylabel(f'α{side} / D{side}')
-            ax.legend(handles=[
-                _L2D([0], [0], color='r', marker='o', ls='', label=f'α{side}  (Re ΔC/C)'),
-                _L2D([0], [0], color='b', marker='o', ls='', label=f'D{side}  (Im ΔC/C)'),
-            ], fontsize=8)
+        # Clear bx1 on the bottom row (rightax=True widgets)
+        for j in range(2):
+            self.alphafplots[1, j].canvas.bx1.cla()
 
-        from matplotlib.lines import Line2D
-        for ax, bx, g_key, label in [
-            (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, 'g_right', 'Y₄₂Z₄'),
-        ]:
-            ax.set_xscale('linear')
-            ax.cla()
-            bx.cla()
-            f_pts, mag_pts, ang_pts = [], [], []
-            f_bar, mag_bar, mag_std, ang_bar, ang_std = [], [], [], [], []
-            for uf in freqs:
-                g = np.array([1.0 / r[g_key] for r in ana[uf]], dtype=complex)
-                mags = np.abs(g)
-                angs = np.angle(g, deg=True)
-                if len(g) > 2:
-                    f_bar.append(uf)
-                    mag_bar.append(np.mean(mags))
-                    mag_std.append(np.std(mags, ddof=1))
-                    ang_bar.append(np.mean(angs))
-                    ang_std.append(np.std(angs, ddof=1))
-                else:
-                    f_pts.extend([uf] * len(g))
-                    mag_pts.extend(mags.tolist())
-                    ang_pts.extend(angs.tolist())
-            if f_pts:
-                ax.plot(f_pts, mag_pts, 'ro', ms=4)
-                bx.plot(f_pts, ang_pts, 'bo', ms=4)
-            if f_bar:
-                ax.errorbar(f_bar, mag_bar, yerr=mag_std, fmt='ro', capsize=3, ms=4)
-                bx.errorbar(f_bar, ang_bar, yerr=ang_std, fmt='bo', capsize=3, ms=4)
-            ax.set_yscale('log')
-            ax.set_ylabel('|' + label + '|')
-            bx.set_ylabel('∠' + label + ' (°)')
-            ax.legend(handles=[
-                Line2D([0], [0], color='r', marker='o', ls='', label='|' + label + '|'),
-                Line2D([0], [0], color='b', marker='o', ls='', label='∠' + label),
-            ], fontsize=8)
+        # Top-left: α₄
+        ax_al = self.alphafplots[0, 0].canvas.ax1
+        add_scalar(ax_al, 'al_right', 'r')
+        ax_al.set_ylabel('α₄  (Re ΔC/C)')
+
+        # Top-right: D₄
+        ax_d = self.alphafplots[0, 1].canvas.ax1
+        add_scalar(ax_d, 'D_right', 'b')
+        ax_d.set_ylabel('D₄  (Im ΔC/C)')
+
+        # Bottom row: |Y₄₂Z₄| (left) and ∠Y₄₂Z₄ (right)
+        ax_mag = self.alphafplots[1, 0].canvas.ax1
+        ax_ang = self.alphafplots[1, 1].canvas.ax1
+        f_pts, mag_pts, ang_pts = [], [], []
+        f_bar, mag_bar, mag_std, ang_bar, ang_std = [], [], [], [], []
+        for uf in freqs:
+            g = np.array([1.0 / r['g_right'] for r in ana[uf]], dtype=complex)
+            mags = np.abs(g)
+            angs = np.angle(g, deg=True)
+            if len(g) > 2:
+                f_bar.append(uf)
+                mag_bar.append(np.mean(mags))
+                mag_std.append(np.std(mags, ddof=1))
+                ang_bar.append(np.mean(angs))
+                ang_std.append(np.std(angs, ddof=1))
+            else:
+                f_pts.extend([uf] * len(g))
+                mag_pts.extend(mags.tolist())
+                ang_pts.extend(angs.tolist())
+        if f_pts:
+            ax_mag.plot(f_pts, mag_pts, 'ro', ms=4)
+            ax_ang.plot(f_pts, ang_pts, 'bo', ms=4)
+        if f_bar:
+            ax_mag.errorbar(f_bar, mag_bar, yerr=mag_std, fmt='ro', capsize=3, ms=4)
+            ax_ang.errorbar(f_bar, ang_bar, yerr=ang_std, fmt='bo', capsize=3, ms=4)
+        ax_mag.set_yscale('log')
+        ax_mag.set_ylabel('|Y₄₂Z₄|')
+        ax_ang.set_ylabel('∠Y₄₂Z₄ (°)')
 
         for i in range(2):
             for j in range(2):
