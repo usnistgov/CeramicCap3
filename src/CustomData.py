@@ -192,7 +192,10 @@ class FourChannels:
         self.Data.append(SampleData(fsig, fsamp, ch3, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch4, Nhars, chunk_periods))
         fsig, fline = self.Data[0].findf()
+        # Clamp Nhars so no harmonic exceeds Nyquist (0.45 * fsamp as margin)
+        nhars_used = max(1, min(Nhars, int(0.45 * fsamp / fsig)))
         for i in range(4):
+            self.Data[i].Nhars = nhars_used
             self.Data[i].setf(fsig, fline)
             self.Data[i].fit()
 

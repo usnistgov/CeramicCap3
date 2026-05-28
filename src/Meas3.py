@@ -47,11 +47,12 @@ class Meas(QObject):
     dataSetReady = pyqtSignal(CustomData.FourChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, switching=True, chunk_periods=0):
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, switching=True, chunk_periods=0, max_nhars=10):
         self.bdraw = rawdatadir
         self.saverawdata = saverawdata
         self.switching = switching
         self.chunk_periods = chunk_periods
+        self.Nhars = max_nhars
         super().__init__()
         self.NDpts = NDpts
         self.Npts = 2*NDpts
@@ -59,7 +60,6 @@ class Meas(QObject):
         self.isidle = True
         self._stop = False
         self._stop_event = threading.Event()
-        self.Nhars = 1
         self.runt = time.time()
         self.fsig = 1000
         self.fsamp = fsamp
@@ -169,8 +169,8 @@ class Meas(QObject):
         self._stop = False
         self._stop_event.clear()
         self.isidle = False
-        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, g1=self.g1, g2=self.g2, N=self.Npts,
-                                       chunk_periods=self.chunk_periods)
+        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g1=self.g1, g2=self.g2,
+                                       N=self.Npts, chunk_periods=self.chunk_periods)
         for self.co in range(self.Npts):
             if self._stop:
                 break

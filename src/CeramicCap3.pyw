@@ -496,7 +496,7 @@ class MainWindow(QMainWindow):
             self.close()
         elif self.measuring:
             self.thread = QThread()
-            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp, switching=self.switching, chunk_periods=10)
+            self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, self.fsamp, self.nsamp, switching=self.switching, chunk_periods=10, max_nhars=self.config.max_nhars)
             self.mydvm.moveToThread(self.thread)
             self.tza1.set_fgain(self.g1)
             self.tza2.set_fgain(self.g2)
