@@ -649,9 +649,8 @@ class MainWindow(QMainWindow):
         if not os.path.exists(os.path.join(bd0, fn_conf)):
             import shutil
             shutil.copy2(self.config.cfgpath, os.path.join(bd0, fn_conf))
-        fn = 'CC3_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
-        mykeys = ['fsig', 'ts', 'alpha3mean', 'beta3mean', 'alpha4mean', 'beta4mean',
-                  'Vz3', 'Vz4', 'gamma3', 'gamma4', 'V1cReadback']
+        fn = 'CC4_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
+        mykeys = ['fsig', 'ts', 'alpha4mean', 'beta4mean', 'Vz4', 'gamma4', 'V1cReadback']
         rdict = self.allData.getkeys(f, mykeys)
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
@@ -678,7 +677,7 @@ class MainWindow(QMainWindow):
                 o += '\n'
                 file.write(o)
         C = self.allData.getRawPhasors(f, self.run_start_time)
-        fn = 'VOLT_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
+        fn = 'VOLT4_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.dat'
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
                 file.write('# {}\n'.format(self.run_description))
@@ -757,7 +756,6 @@ class MainWindow(QMainWindow):
 
         from matplotlib.lines import Line2D as _L2D
         for ax, a_key, d_key, side in [
-            (self.alphafplots[0, 0].canvas.ax1, 'al_left',  'D_left',  '₃'),
             (self.alphafplots[0, 1].canvas.ax1, 'al_right', 'D_right', '₄'),
         ]:
             add_scalar(ax, a_key, 'r')
@@ -770,7 +768,6 @@ class MainWindow(QMainWindow):
 
         from matplotlib.lines import Line2D
         for ax, bx, g_key, label in [
-            (self.alphafplots[1, 0].canvas.ax1, self.alphafplots[1, 0].canvas.bx1, 'g_left',  'Y₃₂Z₃'),
             (self.alphafplots[1, 1].canvas.ax1, self.alphafplots[1, 1].canvas.bx1, 'g_right', 'Y₄₂Z₄'),
         ]:
             ax.set_xscale('linear')
@@ -812,7 +809,7 @@ class MainWindow(QMainWindow):
                 self.alphafplots[i, j].canvas.draw()
 
     def ploteta(self):
-        if self.rData.Res['ts'] <= 0 or not hasattr(self.rData, 'combined3'):
+        if self.rData.Res['ts'] <= 0 or not hasattr(self.rData, 'combined4'):
             return
         for j in range(2):
             self.etaplots[0, j].canvas.ax1.cla()
@@ -822,16 +819,9 @@ class MainWindow(QMainWindow):
         def split(v):
             return (np.real(v) - offset) * mul, np.imag(v) * mul
 
-        c3x, c3y   = split(self.rData.combined3)
         c4x, c4y   = split(self.rData.combined4)
-        Vz3x, Vz3y = split(self.rData.Res['Vz3'])
         Vz4x, Vz4y = split(self.rData.Res['Vz4'])
-        ax3 = self.etaplots[0, 0].canvas.ax1
         ax4 = self.etaplots[0, 1].canvas.ax1
-        ax3.plot(c3x, c3y, 'b+')
-        ax3.plot(Vz3x, Vz3y, 'r*', markersize=10)
-        ax3.set_xlabel('(Re(γ₃η₃ − η₂) − ratio) × 10⁶')
-        ax3.set_ylabel('Im(γ₃η₃ − η₂) × 10⁶')
         ax4.plot(c4x, c4y, 'm+')
         ax4.plot(Vz4x, Vz4y, 'r*', markersize=10)
         ax4.set_xlabel('(Re(γ₄η₄ − η₂) − ratio) × 10⁶')

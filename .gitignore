@@ -1,6 +1,6 @@
 __pycache__/
 R2F_errlog.dat
-data/config.ini
+config.ini
 src/__pycache__/
 *.pyc
 .ipynb_checkpoints/

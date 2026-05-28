@@ -255,12 +255,13 @@ class NPoints:
 
     def _build_fit_etas(self):
         """
-        Returns (eta2, eta3, eta4) arrays for the ellipse lstsq.
+        Returns (eta2, eta4) arrays for the ellipse lstsq.
 
         When per-chunk phasors are available, each ellipse point contributes n_chunks
         data rows instead of one: the per-chunk etas from the two paired measurements
         are averaged to cancel the relay-position offset, then concatenated across all
         ellipse points.  Falls back to the N/2 per-point etas when chunking was not used.
+        V3 (channel index 2) is still acquired but not used in the ellipse fit.
         """
         N2 = self.N // 2
         has_chunks = all(
@@ -268,13 +269,13 @@ class NPoints:
             for i in range(self.N)
         )
         if not has_chunks:
-            return self.eta2, self.eta3, self.eta4
+            return self.eta2, self.eta4
 
         n_ch = min(len(self.Data[i].phasor_chunks) for i in range(self.N))
         if n_ch < 2:
-            return self.eta2, self.eta3, self.eta4
+            return self.eta2, self.eta4
 
-        e2, e3, e4 = [], [], []
+        e2, e4 = [], []
         for m in range(N2):
             pc_even = self.Data[2*m].phasor_chunks[:n_ch]    # (n_ch, 4)
             pc_odd  = self.Data[2*m+1].phasor_chunks[:n_ch]  # (n_ch, 4)
@@ -282,9 +283,8 @@ class NPoints:
             v1_odd  = pc_odd[:, 0]
             # Compute etas per chunk per measurement, then average the paired estimates
             e2.append(0.5 * (pc_even[:, 1] / v1_even + pc_odd[:, 1] / v1_odd))
-            e3.append(0.5 * (pc_even[:, 2] / v1_even + pc_odd[:, 2] / v1_odd))
             e4.append(0.5 * (pc_even[:, 3] / v1_even + pc_odd[:, 3] / v1_odd))
-        return np.concatenate(e2), np.concatenate(e3), np.concatenate(e4)
+        return np.concatenate(e2), np.concatenate(e4)
 
     def calc(self):
         self.precalc()
@@ -293,19 +293,15 @@ class NPoints:
         self.V3m = self.ave4[:, 2]
         self.V4m = self.ave4[:, 3]
         self.eta2 = self.V2m / self.V1m
-        self.eta3 = self.V3m / self.V1m
+        self.eta3 = self.V3m / self.V1m   # V3 still acquired; meaning TBD
         self.eta4 = self.V4m / self.V1m
 
-        eta2_fit, eta3_fit, eta4_fit = self._build_fit_etas()
+        eta2_fit, eta4_fit = self._build_fit_etas()
 
         Xmat = np.column_stack([eta2_fit, np.ones(len(eta2_fit))])
-        (m3, c3), _, _, _ = np.linalg.lstsq(Xmat, eta3_fit, rcond=None)
         (m4, c4), _, _, _ = np.linalg.lstsq(Xmat, eta4_fit, rcond=None)
-        self.gamma3 = 1.0 / m3
         self.gamma4 = 1.0 / m4
-        self.Res['Vz3'] = c3 / m3
         self.Res['Vz4'] = c4 / m4
-        self.Res['gamma3'] = self.gamma3
         self.Res['gamma4'] = self.gamma4
         N2 = self.N // 2
         V4_raw = np.array([0.5*(self.Data[2*k].Data[3].Vc + self.Data[2*k+1].Data[3].Vc)
@@ -328,16 +324,11 @@ class NPoints:
         self.Res['V1rb_center'] = V1rb_center
         self.Res['V1_balance'] = V1rb_center - 0.5 * step
 
-        self.combined3 = self.gamma3 * self.eta3 - self.eta2
         self.combined4 = self.gamma4 * self.eta4 - self.eta2
 
         ratio = self.Res['ratio']
-        self.alpha3 = np.real(self.combined3) / ratio - 1
-        self.beta3  = np.imag(self.combined3) / ratio
         self.alpha4 = np.real(self.combined4) / ratio - 1
         self.beta4  = np.imag(self.combined4) / ratio
-        self.Res['alpha3mean'] = np.mean(self.alpha3)
-        self.Res['beta3mean']  = np.mean(self.beta3)
         self.Res['alpha4mean'] = np.mean(self.alpha4)
         self.Res['beta4mean']  = np.mean(self.beta4)
         self.Res['V1cReadback'] = self.V1c
@@ -345,10 +336,7 @@ class NPoints:
         self.setGoodFlag()
 
     def setGoodFlag(self):
-        self.goodData = not (
-            np.any(~np.isfinite(np.abs(self.combined3))) or
-            np.any(~np.isfinite(np.abs(self.combined4)))
-        )
+        self.goodData = not np.any(~np.isfinite(np.abs(self.combined4)))
 
     def max_raw_amplitude(self, channel_idx):
         """Return max |raw sample| across all measurement points for the given channel index."""
