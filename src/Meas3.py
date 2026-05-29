@@ -96,13 +96,12 @@ class Meas(QObject):
             print(ostr)
         time.sleep(0.001)
 
-    def storeV(self, V1c, V2c, dV1, fsig, g1, g2):
+    def storeV(self, V1c, V2c, dV1, fsig, g2):
         if self.isidle:
             self.V1c = V1c   # small modulated center
             self.V2c = V2c   # large constant
             self.dV1 = dV1   # modulation radius for V1
             self.fsig = fsig
-            self.g1 = g1
             self.g2 = g2
 
     def storeV1pts(self, V1pts):
@@ -179,7 +178,7 @@ class Meas(QObject):
         self._stop = False
         self._stop_event.clear()
         self.isidle = False
-        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g1=self.g1, g2=self.g2,
+        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g2=self.g2,
                                        N=self.Npts, chunk_periods=self.chunk_periods)
         for self.co in range(self.Npts):
             if self._stop:

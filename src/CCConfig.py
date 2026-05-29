@@ -57,13 +57,6 @@ class CCC():
         with open(self.cfgpath,'w') as configfile:
             self.cp.write(configfile)
 
-    def gain1(self,button, checked):
-        if checked:
-            k1='MEAS'
-            k2='gain1'
-            self.cp[k1][k2]=button.text()
-            self.save()
-
     def gain2(self,button, checked):
         if checked:
             k1='MEAS'
@@ -71,8 +64,7 @@ class CCC():
             self.cp[k1][k2]=button.text()
             self.save()
 
-    def setGains(self, g1, g2):
-        self.cp['MEAS']['gain1'] = str(int(g1))
+    def setGains(self, g2):
         self.cp['MEAS']['gain2'] = str(int(g2))
         self.save()
 

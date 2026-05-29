@@ -459,6 +459,7 @@ class MainWindow(QMainWindow):
         self.fsigold = -1
         self.warmup_count = 0
         self.v4_range = 10
+        self._run_logged = False
         self.progressBar.setValue(0)
         self.run_start_time = time.time()
         self.freqs_done = 0
@@ -490,14 +491,14 @@ class MainWindow(QMainWindow):
                 while np.abs(self.V1) > 9:
                     self.V1 = self.V1*0.9
                     self.V2 = self.V2*0.9
-                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, 1, self.g2)
+                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g2)
             else:
                 self.myprint(f"  {self.fsig/1000:.4g} kHz  ".center(56, '-'))
                 tempgain2 = R2FMath.newgainvalue2(self.fsig, self.C41, dV= self.dV,Vmax=3)
                 self.g2 = self.fixed_g2 if self.fixg2 else tempgain2
                 C41_used = self.C41_eff if self.C41_eff is not None else self.C41
                 self.myprint(f'getgain C41_used={C41_used:.3e} (nom {self.C41:.1e}) {tempgain2=} {self.g2}')
-                self.config.setGains(1, self.g2)
+                self.config.setGains(self.g2)
                 self.tza2.set_fgain(self.g2)
                 self.RBupdate()
                 self.warmup_count = 0
@@ -511,7 +512,7 @@ class MainWindow(QMainWindow):
                     self.V1 *= 0.9
                 self.dV = np.abs(self.V1) * self.dvfrac
                 self.myprint(f'{self.V1=:.5f} {self.V2=:.5f} {self.dV=:.5f}')
-                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, 1, self.g2)
+                self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g2)
             self.laUpdate()
             self.mydvm.logMessage.connect(self.myprint)
             self.mydvm.dataReady.connect(self.onNewData)
@@ -601,6 +602,16 @@ class MainWindow(QMainWindow):
         bd0 = self.runDataDir
         dt = datetime.datetime.fromtimestamp(self.run_start_time)
         valname = self.config.recapdir[self.C41]+'-'+self.config.recapdir[self.C42]
+        if not self._run_logged:
+            ts = dt.strftime('%Y%m%d_%H%M')
+            c41_lbl = self.config.recapdir[self.C41]
+            c42_lbl = self.config.recapdir[self.C42]
+            log_line = '\t'.join([ts, c41_lbl, c42_lbl, self.SN41, self.SN42,
+                                   self.run_description]) + '\n'
+            log_path = os.path.join(self.config.datadir, 'runlog.txt')
+            with open(log_path, 'a', encoding='utf-8') as lf:
+                lf.write(log_line)
+            self._run_logged = True
         fn_conf = 'conf_'+valname+'_'+dt.strftime('%Y%m%d_%H%M')+'.ini'
         if not os.path.exists(os.path.join(bd0, fn_conf)):
             import shutil
@@ -637,7 +648,7 @@ class MainWindow(QMainWindow):
         if not os.path.exists(os.path.join(bd0, fn)):
             with open(os.path.join(bd0, fn), "w") as file:
                 file.write('# {}\n'.format(self.run_description))
-                file.write('# frequency/Hz t/s  reV1 imV1 reV2 imV2 reV3 imV3 reV4 imV4 reV1set imV1set reV2set imV2set gain1 gain2\n')
+                file.write('# frequency/Hz t/s  reV1 imV1 reV2 imV2 reV3 imV3 reV4 imV4 reV1set imV1set reV2set imV2set gain2\n')
         with open(os.path.join(bd0, fn), "a") as file:
             for n in range(np.shape(C)[0]):
                 o = '{0:6.0f} {1:6.1f} '.format(C[n, 0], C[n, 1])

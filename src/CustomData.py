@@ -256,8 +256,8 @@ class FourChannels:
             nhars_used   = fit_cache['nhars_used']
             matrix_cache = fit_cache['matrix_cache']
         else:
-            # First point: determine frequency and build matrices
-            fsig_r, fline = self.Data[0].findf()
+            # First point: determine frequency and build matrices; use V2 (large signal)
+            fsig_r, fline = self.Data[1].findf()
             nhars_used = max(1, min(Nhars, int(0.45 * fsamp / fsig_r)))
             matrix_cache = build_fit_cache(fsamp, fsig_r, fline, len(ch1), nhars_used,
                                            use_hann=True, chunk_periods=chunk_periods)
@@ -272,8 +272,13 @@ class FourChannels:
             d.setf(fsig_r, fline)
             d.fit(cache=matrix_cache)
 
-        # Build per-chunk phasor matrix (n_chunks × 4): rotate each chunk by ch0's phase
-        chunks0 = self.Data[0].Vc_chunks
+        # Use V2 (Data[1]) as phase reference: rotate all Vc so V2 is real and positive
+        v2_phase = np.exp(1j * np.angle(self.Data[1].Vc))
+        for d in self.Data:
+            d.Vc = d.Vc / v2_phase
+
+        # Build per-chunk phasor matrix (n_chunks × 4): rotate each chunk by V2's phase
+        chunks0 = self.Data[1].Vc_chunks
         if chunks0 is not None and len(chunks0) > 1:
             n_ch = min(len(d.Vc_chunks) for d in self.Data if d.Vc_chunks is not None)
             self.phasor_chunks = np.zeros((n_ch, 4), dtype=complex)
@@ -288,7 +293,7 @@ class FourChannels:
 
 
 class NPoints:
-    def __init__(self, fsig, fsamp, Nhars=1, g1=1, g2=1, ratio=10, N=8, chunk_periods=0):
+    def __init__(self, fsig, fsamp, Nhars=1, g2=1, ratio=10, N=8, chunk_periods=0):
         self.N             = N
         self.chunk_periods = chunk_periods
         self._fit_cache    = {}   # populated on first setPoint; reused for all points at this frequency
@@ -297,7 +302,6 @@ class NPoints:
         self.Res['ratio'] = ratio
         self.Res['fsamp'] = fsamp
         self.Res['Nhars'] = Nhars
-        self.Res['gain1'] = g1
         self.Res['gain2'] = g2
         self.ats = -1 * np.ones(N)
         self.Res['ts']    = min(self.ats)
@@ -504,6 +508,6 @@ class AllData():
                     line = np.hstack((line, obj.raw8[j, k].real, obj.raw8[j, k].imag))
                 for k in range(np.shape(obj.ctrla)[1]):
                     line = np.hstack((line, obj.ctrla[j//2, k].real, obj.ctrla[j//2, k].imag))
-                line = np.hstack((line, obj.Res['gain1'], obj.Res['gain2']))
+                line = np.hstack((line, obj.Res['gain2']))
                 ret.append(line)
         return np.array(ret)
