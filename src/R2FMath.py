@@ -92,30 +92,30 @@ def get_f(y,rf):
         return get_f(y,minf)
 
 
-def calcI2(f, C42,R=50,V2=-9.9):
+def calcI2(f, C2, R=50, V2=-9.9):
     iw = 1j*f*2*np.pi
-    I2 = V2*iw*C42/(1+iw*C42*R)
+    I2 = V2*iw*C2/(1+iw*C2*R)
     return I2
 
-def calcV1(f, C41,C42,R=50,V2=-9.9):
+def calcV1(f, C1, C2, R=50, V2=-9.9):
     iw = 1j*f*2*np.pi
-    I2 = V2*iw*C42/(1+iw*C42*R)
-    V1=-I2*(R+1/(iw*C41))
+    I2 = V2*iw*C2/(1+iw*C2*R)
+    V1=-I2*(R+1/(iw*C1))
     return V1
 
-def calcI1(f,C41,V1,R=50):
+def calcI1(f, C1, V1, R=50):
     iw = 1j*f*2*np.pi
-    I1 = iw*C41/(1+iw*R*C41)*V1
+    I1 = iw*C1/(1+iw*R*C1)*V1
     return I1
 def lp(f,f0=2e4,Q=0.5):
     ret = f0*f0/(f0*f0-f*f+f0/Q*1j*f)
     return ret
 
-def newgainvalue2(f, C41, dV=0.01, Vmax=0.1):
+def newgainvalue2(f, C1, dV=0.01, Vmax=0.1):
     # dV: expected voltage perturbation at the DUT node [V] (from config); default 0.01 V = 1% of nominal 1 V excitation
     # Vmax: target amplifier output voltage [V]; default 0.1 V keeps well inside the ±10 V output range
     # Returns the nearest power-of-10 transimpedance gain (hardware range 1..100000, base 1e3 V/A)
-    dI1 = calcI1(f, C41, dV, R=50)
+    dI1 = calcI1(f, C1, dV, R=50)
     gain = 10**np.round(np.log10(Vmax/np.abs(dI1*1e3*lp(f))))
     if gain < 1: gain = 1
     if gain > 100000: gain = 100000
@@ -125,7 +125,7 @@ def newgainvalue1(f, C31, dV=0.01, Vmax=0.1):
     # dV: expected voltage perturbation at the DUT node [V] (from config); default 0.01 V = 1% of nominal 1 V excitation
     # Vmax: target amplifier output voltage [V]; default 0.1 V keeps well inside the ±10 V output range
     # Returns the nearest power-of-10 transimpedance gain (hardware range 1..100000, base 1e3 V/A)
-    # C31 is the sample capacitor whose current is measured; C41 no longer needed since dV is supplied directly
+    # C1 is the sample capacitor whose current is measured; dV is supplied directly
     dI1 = calcI1(f, C31, dV, R=50)
     gain = 10**np.round(np.log10(Vmax/np.abs(dI1*1e3*lp(f))))
     if gain < 1: gain = 1
@@ -136,8 +136,8 @@ def newgainvalue1(f, C31, dV=0.01, Vmax=0.1):
 def mingainvalue1(flist, C31, dV=0.01, Vmax=0.1):
     return min(newgainvalue1(f, C31, dV, Vmax) for f in flist)
 
-def mingainvalue2(flist, C41):
-    return min(newgainvalue2(f, C41) for f in flist)
+def mingainvalue2(flist, C1):
+    return min(newgainvalue2(f, C1) for f in flist)
 
 def mycomplexfit(x,y):
     L = len(x)

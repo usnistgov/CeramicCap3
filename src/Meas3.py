@@ -41,21 +41,43 @@ def reset_instruments():
     rm.close()
 
 
+def open_instruments():
+    """Open and return (rm, sg1, dvm) for a measurement sweep."""
+    rm = pyvisa.ResourceManager()
+    sg1 = rm.open_resource(SG1_ADDR)
+    sg1.timeout = 25000
+    dvm = rm.open_resource(DVM_ADDR)
+    dvm.timeout = 25000
+    return rm, sg1, dvm
+
+
+def close_instruments(rm, sg1, dvm):
+    """Close sweep instruments; swallows errors so the caller is never blocked."""
+    for res in (sg1, dvm):
+        try:
+            res.close()
+        except Exception:
+            pass
+    try:
+        rm.close()
+    except Exception:
+        pass
+
+
 class Meas(QObject):
     finished = pyqtSignal()
     dataReady = pyqtSignal(CustomData.NPoints)
-    dataSetReady = pyqtSignal(CustomData.FourChannels)
+    dataSetReady = pyqtSignal(CustomData.ThreeChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, switching=True, chunk_periods=0, max_nhars=10, v4_range=10):
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, chunk_periods=0, max_nhars=10, v4_range=3, switch_normal=True, fit_cache=None, sg1=None, dvm=None, rm=None):
         self.bdraw = rawdatadir
         self.saverawdata = saverawdata
-        self.switching = switching
         self.chunk_periods = chunk_periods
         self.Nhars = max_nhars
         super().__init__()
         self.NDpts = NDpts
-        self.Npts = 2*NDpts
+        self.Npts = NDpts
         self.mutex = mutex
         self.isidle = True
         self._stop = False
@@ -65,14 +87,33 @@ class Meas(QObject):
         self.fsamp = fsamp
         self.nsamp = nsamp
         self.V1_setpoints = None
-        self._relay_pos = -1   # tracks last commanded relay position to avoid redundant switches
-        self.ch3_range = 0.3            # current DVM range for ch103; bumped on overflow
-        self._ch3_range_pending = False # set when range changed; triggers reconfigure in prepForMeas
-        self.v4_range = v4_range        # DAQ voltage range for ch104 (V4); normally 10 V, 100 V if needed
-        self.rm = pyvisa.ResourceManager()
-        self.sg1 = self.rm.open_resource(SG1_ADDR)
-        self.dvm = self.rm.open_resource(DVM_ADDR)
+        self.v4_range = v4_range        # DAQ voltage range for ch103 (TZA); normally 10 V, 100 V if needed
+        self.switch_normal = switch_normal
+        self.initial_fit_cache = fit_cache if fit_cache is not None else {}
+        if sg1 is not None and dvm is not None:
+            # Caller owns the connection; Meas must not close it.
+            self._owns_instruments = False
+            self.rm  = rm
+            self.sg1 = sg1
+            self.dvm = dvm
+        else:
+            self._owns_instruments = True
+            self.rm  = pyvisa.ResourceManager()
+            self.sg1 = self.rm.open_resource(SG1_ADDR)
+            self.dvm = self.rm.open_resource(DVM_ADDR)
         self.precmd()
+
+
+    def switch(self,switch_normal=True):
+        self.switch_normal =switch_normal
+        if self.switch_normal:
+            self.dvm.write('ROUT:OPEN (@218,241)')
+            self.dvm.write('ROUT:CLOS (@211,248)')        
+        else:
+            self.dvm.write('ROUT:OPEN (@211,248)')
+            self.dvm.write('ROUT:CLOS (@218,241)')        
+
+
 
     def precmd(self):
         self.sg1.write('UNIT:ANGL DEG')
@@ -81,14 +122,15 @@ class Meas(QObject):
         self.sg1.write('SOUR1:FUNC SIN')
         self.sg1.write('SOUR2:FUNC SIN')
         self.dvm.timeout = 25000
+
         self.dvm.write('FORM3 REAL')
-        self.dvm.write('ACQ3:VOLT 10,(@101,102)')
-        self.dvm.write(f'ACQ3:VOLT {self.v4_range},(@104)')
-        self.dvm.write('ACQ3:VOLT 0.3,(@103)')
-        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
-        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
-        self.dvm.write('INP3:COUP AC,(@101:104)')
-        self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
+        #self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@101)')    # V1 small signal (~1 V)
+        self.dvm.write('ACQ3:VOLT 18,DIFF,AC,TIME,(@101:103)')   # V2 large signal (~9.9 V)
+        #self.dvm.write(f'ACQ3:VOLT {self.v4_range},DIFF,AC,TIME,(@103)')  # TZA
+        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:103)'.format(self.fsamp))
+        self.dvm.write('SAMP3:COUN {0},(@101:103)'.format(self.nsamp))
+        #self.dvm.write('INP3:COUP AC,(@101:103)')
+        self.dvm.write('TRIG3:SOUR BUS,(@101:103)')
 
     def write1dbg(self, ostr, debug=False):
         self.sg1.write(ostr)
@@ -112,25 +154,10 @@ class Meas(QObject):
         if self.co == 0:
             self.logMessage.emit("V1= {0:8.3f}  V2={1:8.3f} dV1={2:8.3f}  f={3:5.1f} kHz".format(
                 self.V1c, self.V2c, self.dV1, self.fsig/1000))
-        if self._ch3_range_pending:
-            self.dvm.write(f'ACQ3:VOLT {self.ch3_range},(@103)')
-            self.dvm.write('SAMP3:RATE {0:8.2f},(@103)'.format(self.fsamp))
-            self.dvm.write('SAMP3:COUN {0},(@103)'.format(self.nsamp))
-            self._ch3_range_pending = False
-        new_pos = (self.co % 2) if self.switching else 0
-        if new_pos != self._relay_pos:
-            if new_pos == 0:
-                self.dvm.write('ROUT:OPEN (@211,248)')
-                self.dvm.write('ROUT:CLOS (@218,241)')
-            else:
-                self.dvm.write('ROUT:OPEN (@218,241)')
-                self.dvm.write('ROUT:CLOS (@211,248)')
-            self._relay_pos = new_pos
-            self._stop_event.wait(1.0)  # let relay contacts settle before driving signal
         if self.V1_setpoints is not None:
-            self.V1 = self.V1_setpoints[self.co//2]
+            self.V1 = self.V1_setpoints[self.co]
         else:
-            ang = (self.co//2)/self.NDpts*2*np.pi
+            ang = self.co/self.NDpts*2*np.pi
             a = self.dV1*0.8
             b = self.dV1*1.2
             theta = 30/180*np.pi
@@ -170,7 +197,7 @@ class Meas(QObject):
             self.logMessage.emit(f'Error: {ret}')
 
     def sendtrig(self):
-        self.dvm.write('INIT3 (@101:104)')
+        self.dvm.write('INIT3 (@101:103)')
         self.dvm.write('*TRG')
 
     @pyqtSlot()
@@ -178,8 +205,15 @@ class Meas(QObject):
         self._stop = False
         self._stop_event.clear()
         self.isidle = False
+        self.switch(self.switch_normal)
+        self._stop_event.wait(1.0)      # relay settle time
+        if self._stop:
+            self.isidle = True
+            self.finished.emit()
+            return
         self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g2=self.g2,
-                                       N=self.Npts, chunk_periods=self.chunk_periods)
+                                       N=self.Npts, chunk_periods=self.chunk_periods,
+                                       fit_cache=self.initial_fit_cache)
         for self.co in range(self.Npts):
             if self._stop:
                 break
@@ -187,7 +221,8 @@ class Meas(QObject):
             if self._stop:          # stop pressed during SG setup — skip this point
                 break
             self.sendtrig()
-            self._stop_event.wait(1.0)  # interruptible — wakes immediately on stop()
+            acq_time = self.nsamp / self.fsamp
+            self._stop_event.wait(acq_time + 0.5)  # interruptible; +0.5 s margin for trigger latency
             try:
                 self.getvals()
             except Exception as e:
@@ -195,52 +230,53 @@ class Meas(QObject):
             if self._stop:
                 break
         self.isidle = True
-        if not self._stop and min(self.rawN.ats) > 0:
+        if not self._stop and self.rawN.is_complete:
             self.rawN.calc()
             self.dataReady.emit(self.rawN)
+        elif not self._stop:
+            self.logMessage.emit(
+                f'set incomplete: {self.rawN._n_filled}/{self.rawN.N} pts acquired — skipping')
         self.finished.emit()
-        for res in (self.sg1, self.dvm):
+        if self._owns_instruments:
+            for res in (self.sg1, self.dvm):
+                try:
+                    res.close()
+                except Exception:
+                    pass
             try:
-                res.close()
+                self.rm.close()
             except Exception:
                 pass
-        try:
-            self.rm.close()
-        except Exception:
-            pass
 
     @pyqtSlot()
     def stop(self):
         self._stop = True
         self._stop_event.set()  # wake the wait() immediately; ABOR sent by the worker
 
-    _CH3_RANGES = [0.3, 3.0, 10.0]
+    def _fetch(self, chan):
+        """Fetch one digitizer channel; logs if the transfer takes unexpectedly long."""
+        t0 = time.time()
+        data = self.dvm.query_binary_values(f'FETCH3? (@{chan})', datatype='f', is_big_endian=True)
+        dt = time.time() - t0
+        if dt > 2.0:
+            self.logMessage.emit(f'  FETCH @{chan} slow: {dt:.2f}s')
+        return data
 
     def getvals(self):
-        relay_pos = (self.co % 2) if self.switching else 0
-        if relay_pos == 0:
-            ch2 = self.dvm.query_binary_values('FETCH3? (@101)', datatype='f', is_big_endian=True)
-            ch1 = self.dvm.query_binary_values('FETCH3? (@102)', datatype='f', is_big_endian=True)
+        if self.switch_normal:
+            ch1 = self._fetch(101)
+            ch2 = self._fetch(102)
         else:
-            ch1 = self.dvm.query_binary_values('FETCH3? (@101)', datatype='f', is_big_endian=True)
-            ch2 = self.dvm.query_binary_values('FETCH3? (@102)', datatype='f', is_big_endian=True)
-        ch3 = self.dvm.query_binary_values('FETCH3? (@103)', datatype='f', is_big_endian=True)
-        ch4 = self.dvm.query_binary_values('FETCH3? (@104)', datatype='f', is_big_endian=True)
+            ch2 = self._fetch(101)
+            ch1 = self._fetch(102)
 
-        # Auto-range ch3: if overflowed, bump range so next point acquires at the larger range
-        ch3_arr = np.asarray(ch3)
-        if np.max(np.abs(ch3_arr)) > 0.9 * self.ch3_range:
-            idx = self._CH3_RANGES.index(self.ch3_range)
-            if idx < len(self._CH3_RANGES) - 1:
-                self.ch3_range = self._CH3_RANGES[idx + 1]
-                self._ch3_range_pending = True
-                self.logMessage.emit(f'ch3 overflow -> bumping range to {self.ch3_range} V')
+        ch3 = self._fetch(103)
         if self.saverawdata:
             now = datetime.datetime.now()
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             bd = os.path.join(self.bdraw, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
             os.makedirs(bd, exist_ok=True)
             fn = os.path.join(bd, f"ceramic_raw_{timestamp}.npz")
-            np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3, ch4=ch4)
-        self.rawN.setPoint(self.co, ch1, ch2, ch3, ch4, self.V1rb, self.V2rb, time.time())
+            np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3)
+        self.rawN.setPoint(self.co, ch1, ch2, ch3, self.V1rb, self.V2rb, time.time())
         self.dataSetReady.emit(self.rawN.Data[self.co])

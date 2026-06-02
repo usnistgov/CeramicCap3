@@ -19,38 +19,32 @@ class CCC():
         self.fstart = float(self.meas['FSTART'])
         self.dvfrac = float(self.meas['DVFRAC'])
         self.nrMeas = int(self.meas['MEASPERFREQ'])
-        self.fsamp  = int(self.meas['FSAMP'])
-        self.nsamp  = int(self.meas['NSAMP'])
+        self.fsamp     = int(self.meas['FSAMP'])
+        self.forcefmax = self.cp['MEAS'].getboolean('forcefmax', fallback=False)
         self.datadir    = self.meas['DATADIR']
         self.logdir     = self.meas['LOGDIR']
         self.rawdatadir = self.meas['RAWDATADIR']
         self.saverawdata = self.cp['MEAS'].getboolean('saverawdata', fallback=False)
-        self.nwarmup = int(self.meas.get('NWARMUP', '2'))
+        self.eta3_limit = float(self.meas.get('ETA3LIMIT', '0.01'))
+        self.max_step_frac = float(self.meas.get('MAXSTEPFRAC', '0.50'))
+        self.decay = float(self.meas.get('DECAY', '0.85'))
+        self.nellipse = int(self.meas.get('NELLIPSE', '8'))
         self.fixg2 = self.cp['MEAS'].getboolean('fixg2', fallback=False)
         self.sat_threshold = float(self.meas.get('SATTHRESHOLD', '10.0'))
-        self.switching = self.cp['MEAS'].getboolean('switching', fallback=True)
         self.max_nhars = int(self.meas.get('MAXNHARS', '10'))
         self.version = self.meas.get('VERSION', 'unknown')
 
         k1='CONFIG'
         for k2 in list(self.cp[k1].keys()):
             k2u = k2.upper()
-            if k2u=='TOPLEFT':
-                self.C31 = self.capdict[self.cp[k1][k2].upper()]
-            elif k2u=='BOTTOMLEFT':
-                self.C32 = self.capdict[self.cp[k1][k2].upper()]
-            elif k2u=='TOPRIGHT':
-                 self.C41 = self.capdict[self.cp[k1][k2].upper()]
-            elif k2u=='BOTTOMRIGHT':
-                self.C42 = self.capdict[self.cp[k1][k2].upper()]
-            elif k2u=='SNTOPLEFT':
-                self.SN31 = self.cp[k1][k2].upper()
-            elif k2u=='SNBOTTOMLEFT':
-                self.SN32 = self.cp[k1][k2].upper()
-            elif k2u=='SNTOPRIGHT':
-                self.SN41 = self.cp[k1][k2].upper()
-            elif k2u=='SNBOTTOMRIGHT':
-                self.SN42 = self.cp[k1][k2].upper()
+            if k2u=='C1':
+                self.C1 = self.capdict[self.cp[k1][k2].upper()]
+            elif k2u=='C2':
+                self.C2 = self.capdict[self.cp[k1][k2].upper()]
+            elif k2u=='SNC1':
+                self.SN1 = self.cp[k1][k2].upper()
+            elif k2u=='SNC2':
+                self.SN2 = self.cp[k1][k2].upper()
 
 
     def save(self):
@@ -75,9 +69,8 @@ if __name__=="__main__":
     config =CCC()
     for k,v in config.meas.items():
         print(k,v)
-    print(f"{config.C31=} {config.C32=} {config.C41=} {config.C42=}")
-    print(f"{config.SN31=} {config.SN32=} {config.SN41=} {config.SN42=}")
-    print(config.recapdir[config.C31])
+    print(f"{config.C1=} {config.C2=}")
+    print(f"{config.SN1=} {config.SN2=}")
     print(f"{config.flist}")
     print(f"{config.datadir}")
 

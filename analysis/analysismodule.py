@@ -23,14 +23,14 @@ def _parse_capval_pF(s):
     raise ValueError(f"Cannot parse capacitance label: {s!r}")
 
 
-def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False,
+def analyze_block(V1, V2, V3, V4, fsig=None, C2_pF=None, correct_bias=False,
                   V1rb=None, V2rb=None):
     """
     Core phasor analysis for one ellipse block.
     V1..V4 : arrays of complex phasors in the phase-rotated frame (V1 is real).
 
-    fsig        : signal frequency in Hz (required when C42_pF is given)
-    C42_pF      : nominal C42 in pF.  When supplied, estimates I_bias by working
+    fsig        : signal frequency in Hz (required when C2_pF is given)
+    C2_pF      : nominal C42 in pF.  When supplied, estimates I_bias by working
                   in the original (unrotated) frame using the SG readbacks V1rb/V2rb.
                   Model: V4_orig = a·V1rb + b  →  V4_Ibias = b − a·mean(V2rb).
                   V2rb is constant across the ellipse (fixed SG output), so the
@@ -53,7 +53,7 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False,
 
     I_bias_pA = None
     V4_Ibias   = None
-    if fsig is not None and C42_pF is not None and V1rb is not None and V2rb is not None:
+    if fsig is not None and C2_pF is not None and V1rb is not None and V2rb is not None:
         omega = 2 * np.pi * fsig
         # Work in the original (unrotated) frame.
         # V1_data is real (|V1_SG|); the rotation factor per point is V1rb/|V1rb|.
@@ -66,8 +66,8 @@ def analyze_block(V1, V2, V3, V4, fsig=None, C42_pF=None, correct_bias=False,
         params = np.linalg.lstsq(A_bias, V4_orig, rcond=None)[0]
         V4_Ibias = params[1] - params[0] * np.mean(V2rb)   # [V], original frame
 
-        if omega * C42_pF < 2e6:   # ~3 kHz/100 pF — below this I_bias/I_C42 is extractable
-            I_bias_pA = -V4_Ibias * (1j * omega * C42_pF) * g_right
+        if omega * C2_pF < 2e6:   # ~3 kHz/100 pF — below this I_bias/I_C42 is extractable
+            I_bias_pA = -V4_Ibias * (1j * omega * C2_pF) * g_right
 
         if correct_bias:
             # Subtract constant V4_Ibias in original frame, then re-rotate back
@@ -106,7 +106,7 @@ class oneCap:
         resulting ana_err reflects run-to-run scatter rather than
         within-run scatter.
     """
-    def __init__(self, bds, fns, C42_pF=None, correct_bias=False):
+    def __init__(self, bds, fns, C2_pF=None, correct_bias=False):
         if isinstance(bds, (str, os.PathLike)):
             bds = [bds]
         if isinstance(fns, (str, os.PathLike)):
@@ -159,7 +159,7 @@ class oneCap:
                 self.elli4.append(R2FMath.ComplexEllipse.fit_from_cmplx_points(eta4))
 
                 res = analyze_block(V1, V2, V3, V4,
-                                    fsig=f, C42_pF=C42_pF, correct_bias=correct_bias,
+                                    fsig=f, C2_pF=C2_pF, correct_bias=correct_bias,
                                     V1rb=V1rb, V2rb=V2rb)
                 g_left, g_right = res['g_left'], res['g_right']
                 dratio = res['ratio4raw'] - res['ratio3raw']
@@ -236,12 +236,12 @@ class completeSet:
     Low-level constructor: pass parallel bds/fns lists, one element per cap.
     Each element may be a single string or a list of strings (multiple runs).
     """
-    def __init__(self, bds, fns, C0=100, fmax=500000, C42_pF_list=None, correct_bias=False):
+    def __init__(self, bds, fns, C0=100, fmax=500000, C2_pF_list=None, correct_bias=False):
         self.C0 = C0
         self.myCaps = []
         for i, (b, f) in enumerate(zip(bds, fns)):
-            c42 = C42_pF_list[i] if C42_pF_list is not None else None
-            self.myCaps.append(oneCap(b, f, C42_pF=c42, correct_bias=correct_bias))
+            c42 = C2_pF_list[i] if C2_pF_list is not None else None
+            self.myCaps.append(oneCap(b, f, C2_pF=c42, correct_bias=correct_bias))
         self.di = self.myCaps[0].di
         self._all_rounded = [np.round(cap.ana_mean[:, 0]).astype(int) for cap in self.myCaps]
         self.analyze(fmax)
@@ -286,7 +286,7 @@ class completeSet:
         """
         bds = []
         fns = []
-        C42_pF_list = []
+        C2_pF_list = []
         prev_capval = ref_capval
         for sn, capval, timestamps in entries:
             if isinstance(timestamps, str):
@@ -299,10 +299,10 @@ class completeSet:
                 cap_fns.append(f'VOLT_{capval}-{prev_capval}_{ts}.dat')
             bds.append(cap_bds)
             fns.append(cap_fns)
-            C42_pF_list.append(_parse_capval_pF(prev_capval))
+            C2_pF_list.append(_parse_capval_pF(prev_capval))
             prev_capval = capval
         return cls(bds, fns, C0=C0, fmax=fmax,
-                   C42_pF_list=C42_pF_list, correct_bias=correct_bias)
+                   C2_pF_list=C2_pF_list, correct_bias=correct_bias)
 
     def analyze(self, fmax=500000):
         self.fmax = fmax

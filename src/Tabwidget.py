@@ -33,11 +33,20 @@ class MyTabWidget(QWidget):
         glayout =  QGridLayout()
         self.mytabs[0].setLayout(glayout)
         glayout.addWidget(parent.circuit_setup, 0, 0)
-        glayout =  QGridLayout()
-        self.mytabs[1].setLayout(glayout)
+        scatter_vbox = QVBoxLayout()
+        self.mytabs[1].setLayout(scatter_vbox)
+        scatter_btn_row = QHBoxLayout()
+        parent.scatter_mode_btn = QPushButton('Show: eta')
+        scatter_btn_row.addWidget(parent.scatter_mode_btn)
+        scatter_btn_row.addStretch()
+        scatter_vbox.addLayout(scatter_btn_row)
+        scatter_grid_widget = QWidget()
+        scatter_grid = QGridLayout(scatter_grid_widget)
+        scatter_grid.setContentsMargins(0, 0, 0, 0)
         for i in range(2):
             for j in range(2):
-                glayout.addWidget(parent.scatterplots[i,j],i,j)
+                scatter_grid.addWidget(parent.scatterplots[i, j], i, j)
+        scatter_vbox.addWidget(scatter_grid_widget)
         glayout =  QGridLayout()
         self.mytabs[2].setLayout(glayout)
         for i in range(2):

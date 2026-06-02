@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.optimize
+import pandas as pd
 
 
 
@@ -231,8 +232,8 @@ class SampleData:
         self.fv   = None
 
 
-class FourChannels:
-    def __init__(self, fsig, fsamp, Nhars, ch1, ch2, ch3, ch4, V1c, V2c, i, ts,
+class ThreeChannels:
+    def __init__(self, fsig, fsamp, Nhars, ch1, ch2, ch3, V1c, V2c, i, ts,
                  chunk_periods=0, fit_cache=None):
         self.ts            = ts
         self.fsig          = fsig
@@ -247,7 +248,6 @@ class FourChannels:
         self.Data.append(SampleData(fsig, fsamp, ch1, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch2, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch3, Nhars, chunk_periods))
-        self.Data.append(SampleData(fsig, fsamp, ch4, Nhars, chunk_periods))
 
         if fit_cache is not None and 'fsig' in fit_cache:
             # Reuse frequency and precomputed matrices from earlier point at same frequency
@@ -277,14 +277,14 @@ class FourChannels:
         for d in self.Data:
             d.Vc = d.Vc / v2_phase
 
-        # Build per-chunk phasor matrix (n_chunks × 4): rotate each chunk by V2's phase
+        # Build per-chunk phasor matrix (n_chunks × 3): rotate each chunk by V2's phase
         chunks0 = self.Data[1].Vc_chunks
         if chunks0 is not None and len(chunks0) > 1:
             n_ch = min(len(d.Vc_chunks) for d in self.Data if d.Vc_chunks is not None)
-            self.phasor_chunks = np.zeros((n_ch, 4), dtype=complex)
+            self.phasor_chunks = np.zeros((n_ch, 3), dtype=complex)
             for k in range(n_ch):
                 cf_k = np.exp(-1j * np.angle(chunks0[k]))
-                for j in range(4):
+                for j in range(3):
                     self.phasor_chunks[k, j] = self.Data[j].Vc_chunks[k] * cf_k
 
     def strip_raw(self):
@@ -293,135 +293,129 @@ class FourChannels:
 
 
 class NPoints:
-    def __init__(self, fsig, fsamp, Nhars=1, g2=1, ratio=10, N=8, chunk_periods=0):
+    def __init__(self, fsig, fsamp, Nhars=1, g2=1, ratio=10, N=8, chunk_periods=0, fit_cache=None):
         self.N             = N
         self.chunk_periods = chunk_periods
-        self._fit_cache    = {}   # populated on first setPoint; reused for all points at this frequency
+        self._fit_cache    = fit_cache if fit_cache is not None else {}
+        self._n_filled     = 0
         self.Res = {}
         self.Res['fsig']  = fsig
         self.Res['ratio'] = ratio
         self.Res['fsamp'] = fsamp
         self.Res['Nhars'] = Nhars
         self.Res['gain2'] = g2
-        self.ats = -1 * np.ones(N)
-        self.Res['ts']    = min(self.ats)
+        self.ats = -1.0 * np.ones(N)
+        self.Res['ts']    = -1.0
         self.Data = np.zeros(N, dtype=object)
 
-    def setPoint(self, i, ch1, ch2, ch3, ch4, V1c, V2c, ts):
+    def setPoint(self, i, ch1, ch2, ch3, V1c, V2c, ts):
         self.V1c = V1c
-        self.Data[i] = FourChannels(
+        self.Data[i] = ThreeChannels(
             self.Res['fsig'], self.Res['fsamp'], self.Res['Nhars'],
-            ch1, ch2, ch3, ch4, V1c, V2c, i, ts,
+            ch1, ch2, ch3, V1c, V2c, i, ts,
             chunk_periods=self.chunk_periods,
             fit_cache=self._fit_cache,
         )
         self.ats[i] = ts
-        if min(self.ats) > 0:
-            self.Res['ts'] = np.mean(self.ats)
+        self._n_filled += 1
+        if self.is_complete:
+            self.Res['ts'] = float(np.mean(self.ats))
+
+    @property
+    def is_complete(self):
+        return self._n_filled == self.N
 
     def precalc(self):
-        self.raw8 = np.zeros((self.N, 4), dtype=complex)
+        self.raw3 = np.zeros((self.N, 3), dtype=complex)
         self.ctrl = np.zeros((self.N, 2), dtype=complex)
         for i in range(self.N):
             phi = np.angle(self.Data[i].Data[0].Vc)
             cf = np.exp(-1j * phi)
-            for j in range(4):
-                self.raw8[i, j] = self.Data[i].Data[j].Vc * cf
+            for j in range(3):
+                self.raw3[i, j] = self.Data[i].Data[j].Vc * cf
             self.ctrl[i, 0] = self.Data[i].V1c
             self.ctrl[i, 1] = self.Data[i].V2c
-        self.ave4  = 0.5 * (self.raw8[::2, :] + self.raw8[1::2, :])
-        self.ctrla = 0.5 * (self.ctrl[::2, :] + self.ctrl[1::2, :])
+        self.ctrla = self.ctrl
 
     def _build_fit_etas(self):
         """
-        Returns (eta2, eta4) arrays for the ellipse lstsq.
+        Returns (eta2, eta3) arrays for the ellipse lstsq.
 
-        When per-chunk phasors are available, each ellipse point contributes n_chunks
-        data rows instead of one: the per-chunk etas from the two paired measurements
-        are averaged to cancel the relay-position offset, then concatenated across all
-        ellipse points.  Falls back to the N/2 per-point etas when chunking was not used.
-        V3 (channel index 2) is still acquired but not used in the ellipse fit.
+        When per-chunk phasors are available each ellipse point contributes n_chunks
+        data rows, giving a denser lstsq fit.  Falls back to N per-point etas when
+        chunking was not used.
         """
-        N2 = self.N // 2
         has_chunks = all(
-            isinstance(self.Data[i], FourChannels) and self.Data[i].phasor_chunks is not None
+            isinstance(self.Data[i], ThreeChannels) and self.Data[i].phasor_chunks is not None
             for i in range(self.N)
         )
         if not has_chunks:
-            return self.eta2, self.eta4
+            return self.eta2, self.eta3
 
         n_ch = min(len(self.Data[i].phasor_chunks) for i in range(self.N))
         if n_ch < 2:
-            return self.eta2, self.eta4
+            return self.eta2, self.eta3
 
-        e2, e4 = [], []
-        for m in range(N2):
-            pc_even = self.Data[2*m].phasor_chunks[:n_ch]    # (n_ch, 4)
-            pc_odd  = self.Data[2*m+1].phasor_chunks[:n_ch]  # (n_ch, 4)
-            v1_even = pc_even[:, 0]   # real and positive after per-chunk rotation
-            v1_odd  = pc_odd[:, 0]
-            # Compute etas per chunk per measurement, then average the paired estimates
-            e2.append(0.5 * (pc_even[:, 1] / v1_even + pc_odd[:, 1] / v1_odd))
-            e4.append(0.5 * (pc_even[:, 3] / v1_even + pc_odd[:, 3] / v1_odd))
-        return np.concatenate(e2), np.concatenate(e4)
+        e2, e3 = [], []
+        for m in range(self.N):
+            pc  = self.Data[m].phasor_chunks[:n_ch]
+            v1  = pc[:, 0]
+            e2.append(pc[:, 1] / v1)
+            e3.append(pc[:, 2] / v1)
+        return np.concatenate(e2), np.concatenate(e3)
 
     def calc(self):
         self.precalc()
-        self.V1m = self.ave4[:, 0]
-        self.V2m = self.ave4[:, 1]
-        self.V3m = self.ave4[:, 2]
-        self.V4m = self.ave4[:, 3]
+        self.V1m = self.raw3[:, 0]
+        self.V2m = self.raw3[:, 1]
+        self.V3m = self.raw3[:, 2]
         self.eta2 = self.V2m / self.V1m
-        self.eta3 = self.V3m / self.V1m   # V3 still acquired; meaning TBD
-        self.eta4 = self.V4m / self.V1m
+        self.eta3 = self.V3m / self.V1m
 
-        eta2_fit, eta4_fit = self._build_fit_etas()
+        eta2_fit, eta3_fit = self._build_fit_etas()
 
         Xmat = np.column_stack([eta2_fit, np.ones(len(eta2_fit))])
-        (m4, c4), _, _, _ = np.linalg.lstsq(Xmat, eta4_fit, rcond=None)
-        self.gamma4 = 1.0 / m4
-        self.Res['Vz4'] = c4 / m4
-        self.Res['gamma4'] = self.gamma4
-        N2 = self.N // 2
-        V4_raw = np.array([0.5*(self.Data[2*k].Data[3].Vc + self.Data[2*k+1].Data[3].Vc)
-                           for k in range(N2)])
-        V1_meas = np.array([0.5*(self.Data[2*k].Data[0].Vc + self.Data[2*k+1].Data[0].Vc)
-                            for k in range(N2)])
-        eta4 = V4_raw / V1_meas
+        (m4, c4), _, _, _ = np.linalg.lstsq(Xmat, eta3_fit, rcond=None)
+        self.gamma3 = 1.0 / m4
+        self.Res['Vz3'] = c4 / m4
+        self.Res['gamma3'] = self.gamma3
+        V4_raw  = np.array([self.Data[k].Data[2].Vc for k in range(self.N)])
+        V1_meas = np.array([self.Data[k].Data[0].Vc for k in range(self.N)])
+        eta3 = V4_raw / V1_meas
         V1rb_pts = self.ctrla[:, 0]
         V1rb_center = np.mean(V1rb_pts)
-        Xmat = np.column_stack([V1rb_pts - V1rb_center, np.ones(N2)])
-        (m_bal, c_bal), _, _, _ = np.linalg.lstsq(Xmat, eta4, rcond=None)
+        Xmat = np.column_stack([V1rb_pts - V1rb_center, np.ones(self.N)])
+        (m_bal, c_bal), _, _, _ = np.linalg.lstsq(Xmat, eta3, rcond=None)
         step = c_bal / m_bal
         dV1_spread = np.std(V1rb_pts)
         step_limit = 5 * dV1_spread
         if np.abs(step) > step_limit:
             step = step * step_limit / np.abs(step)
-        self.Res['eta4fit_slope'] = m_bal
-        self.Res['eta4fit_intercept'] = c_bal
-        self.Res['eta4_mean'] = np.mean(eta4)
+        self.Res['eta3fit_slope'] = m_bal
+        self.Res['eta3fit_intercept'] = c_bal
+        self.Res['eta3_mean'] = np.mean(eta3)
         self.Res['V1rb_center'] = V1rb_center
         self.Res['V1_balance'] = V1rb_center - 0.5 * step
 
-        self.combined4 = self.gamma4 * self.eta4 - self.eta2
+        self.combined3 = self.gamma3 * self.eta3 - self.eta2
 
         ratio = self.Res['ratio']
-        self.alpha4 = np.real(self.combined4) / ratio - 1
-        self.beta4  = np.imag(self.combined4) / ratio
-        self.Res['alpha4mean'] = np.mean(self.alpha4)
-        self.Res['beta4mean']  = np.mean(self.beta4)
+        self.alpha3 = np.real(self.combined3) / ratio - 1
+        self.beta3  = np.imag(self.combined3) / ratio
+        self.Res['alpha3mean'] = np.mean(self.alpha3)
+        self.Res['beta3mean']  = np.mean(self.beta3)
         self.Res['V1cReadback'] = self.V1c
 
         self.setGoodFlag()
 
     def setGoodFlag(self):
-        self.goodData = not np.any(~np.isfinite(np.abs(self.combined4)))
+        self.goodData = not np.any(~np.isfinite(np.abs(self.combined3)))
 
     def max_raw_amplitude(self, channel_idx):
         """Return max |raw sample| across all measurement points for the given channel index."""
         mx = 0.0
         for d in self.Data:
-            if isinstance(d, FourChannels) and len(d.Data) > channel_idx:
+            if isinstance(d, ThreeChannels) and len(d.Data) > channel_idx:
                 raw = d.Data[channel_idx].data
                 if raw is not None:
                     mx = max(mx, float(np.max(np.abs(raw))))
@@ -429,85 +423,118 @@ class NPoints:
 
     def strip_raw(self):
         for fc in self.Data:
-            if isinstance(fc, FourChannels):
+            if isinstance(fc, ThreeChannels):
                 fc.strip_raw()
 
 
 class AllData():
     def __init__(self):
+        # keyed by (round(fsig_hz), swpos); swpos 0=straight, 1=cross
         self.mydict = {}
 
-    def append(self, ND: NPoints):
-        f = ND.Res['fsig']
-        if f not in self.mydict:
-            self.mydict[f] = []
-        self.mydict[f].append(ND)
+    def _key(self, f, swpos):
+        return (round(f), int(swpos))
+
+    def append(self, nd: NPoints):
+        key = self._key(nd.Res['fsig'], nd.Res.get('switch_pos', 0))
+        if key not in self.mydict:
+            self.mydict[key] = []
+        self.mydict[key].append(nd)
 
     def deletekey(self, f):
-        if f in self.mydict:
-            del self.mydict[f]
+        """Remove all entries at frequency f (both switch states)."""
+        f_hz = round(f)
+        for sw in (0, 1):
+            self.mydict.pop((f_hz, sw), None)
+
+    def freqs(self):
+        """Sorted list of unique nominal frequencies (integer Hz) that have any data."""
+        return sorted({k[0] for k in self.mydict})
+
+    def entries(self, f):
+        """All NPoints at frequency f: straight state first, then cross."""
+        f_hz = round(f)
+        result = []
+        for sw in (0, 1):
+            result.extend(self.mydict.get((f_hz, sw), []))
+        return result
 
     def count(self):
-        return len(self.mydict)
+        """Number of distinct frequencies with any data."""
+        return len({k[0] for k in self.mydict})
 
     def countf(self, f):
-        if f not in self.mydict:
-            return 0
-        else:
-            return len(self.mydict[f])
+        """Total NPoints at frequency f across both switch states."""
+        return sum(len(self.mydict.get((round(f), sw), [])) for sw in (0, 1))
+
+    def countf_sw(self, f, sw):
+        return len(self.mydict.get(self._key(f, sw), []))
 
     def getkeys(self, f, keys):
-        retdict = {}
-        L = len(self.mydict[f])
-        if L == 0:
+        nds = self.entries(f)
+        if not nds:
+            return {k: np.array([]) for k in keys}
+        retdict = {k: np.empty(len(nds), dtype=object) for k in keys}
+        for n, nd in enumerate(nds):
             for k in keys:
-                retdict[k] = np.array([])
-            return retdict
-        for k in keys:
-            retdict[k] = np.empty(L, dtype=object)
-        for n, a in enumerate(self.mydict[f]):
-            for k in keys:
-                retdict[k][n] = a.Res[k]
+                retdict[k][n] = nd.Res[k]
         return retdict
 
     def getallkeys(self, f):
-        if f not in self.mydict or len(self.mydict[f]) == 0:
+        nds = self.entries(f)
+        if not nds:
             return {}
-        keys = list(self.mydict[f][0].Res.keys())
-        return self.getkeys(f, keys)
+        return self.getkeys(f, list(nds[0].Res.keys()))
 
     def getdictf(self, keys):
-        retdict = {}
         keys = list(keys)
         if 'fsig' not in keys:
             keys.append('fsig')
-        allf = list(self.mydict)
-        if len(allf) == 0:
-            for k in keys:
-                retdict[k] = np.array([])
-            return retdict
-        else:
-            for k in keys:
-                retdict[k] = []
-            for f in allf:
-                odict = self.getkeys(f, keys)
-                for k in keys:
-                    for item in odict[k]:
-                        retdict[k].append(item)
-            for k in keys:
-                retdict[k] = np.array(retdict[k])
-            return retdict
+        all_freqs = self.freqs()
+        if not all_freqs:
+            return {k: np.array([]) for k in keys}
+        retdict = {k: [] for k in keys}
+        for f in all_freqs:
+            for k, v in self.getkeys(f, keys).items():
+                retdict[k].extend(list(v))
+        return {k: np.array(retdict[k]) for k in keys}
 
     def getRawPhasors(self, f, t0=0):
-        ret = []
-        for obj in self.mydict[f]:
-            Nrows = np.shape(obj.raw8)[0]
-            for j in range(Nrows):
-                line = np.hstack((f, obj.Res['ts'] - t0))
-                for k in range(np.shape(obj.raw8)[1]):
-                    line = np.hstack((line, obj.raw8[j, k].real, obj.raw8[j, k].imag))
-                for k in range(np.shape(obj.ctrla)[1]):
-                    line = np.hstack((line, obj.ctrla[j//2, k].real, obj.ctrla[j//2, k].imag))
-                line = np.hstack((line, obj.Res['gain2']))
-                ret.append(line)
-        return np.array(ret)
+        COLS = ['frequency/Hz', 't/s',
+                'reV1', 'imV1', 'reV2', 'imV2', 'reTZA', 'imTZA',
+                'reV1set', 'imV1set', 'reV2set', 'imV2set',
+                'gain2', 'fsamp', 'swpos']
+        rows = []
+        for obj in self.entries(f):
+            for j in range(obj.raw3.shape[0]):
+                row = [f, obj.Res['ts'] - t0]
+                for k in range(obj.raw3.shape[1]):
+                    row += [obj.raw3[j, k].real, obj.raw3[j, k].imag]
+                for k in range(obj.ctrla.shape[1]):
+                    row += [obj.ctrla[j, k].real, obj.ctrla[j, k].imag]
+                row += [int(obj.Res['gain2']), int(obj.Res['fsamp']), int(obj.Res.get('switch_pos', 0))]
+                rows.append(row)
+        return pd.DataFrame(rows, columns=COLS)
+
+    def getEllipseData(self, f):
+        """One row per NPoints (one ellipse sweep): f, t, ratio, eta2, eta3, gain, gain2, fsamp, swpos."""
+        rows = []
+        for obj in self.entries(f):
+            if not hasattr(obj, 'combined3'):
+                continue
+            rows.append({
+                'f':     float(obj.Res['fsig']),
+                't':     float(obj.Res['ts']),
+                'ratio': complex(np.mean(obj.combined3)),
+                'eta2':  complex(np.mean(obj.eta2)),
+                'eta3':  complex(np.mean(obj.eta3)),
+                'gain':  float(abs(obj.gamma3)),
+                'gain2': int(obj.Res['gain2']),
+                'fsamp': int(obj.Res['fsamp']),
+                'swpos': int(obj.Res.get('switch_pos', 0)),
+            })
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            for col in ('ratio', 'eta2', 'eta3'):
+                df[col] = df[col].astype(complex)
+        return df
