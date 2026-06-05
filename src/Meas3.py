@@ -124,13 +124,11 @@ class Meas(QObject):
         self.dvm.timeout = 25000
 
         self.dvm.write('FORM3 REAL')
-        #self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@101)')    # V1 small signal (~1 V)
-        self.dvm.write('ACQ3:VOLT 18,DIFF,AC,TIME,(@101:103)')   # V2 large signal (~9.9 V)
-        #self.dvm.write(f'ACQ3:VOLT {self.v4_range},DIFF,AC,TIME,(@103)')  # TZA
-        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:103)'.format(self.fsamp))
-        self.dvm.write('SAMP3:COUN {0},(@101:103)'.format(self.nsamp))
-        #self.dvm.write('INP3:COUP AC,(@101:103)')
-        self.dvm.write('TRIG3:SOUR BUS,(@101:103)')
+        self.dvm.write('ACQ3:VOLT 18,DIFF,AC,TIME,(@101:102)')   # V1, V2: large signals
+        self.dvm.write('ACQ3:VOLT 0.3,DIFF,AC,TIME,(@103:104)')  # V3, V4: TZA channels 300 mV
+        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
+        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
+        self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
 
     def write1dbg(self, ostr, debug=False):
         self.sg1.write(ostr)
@@ -197,7 +195,7 @@ class Meas(QObject):
             self.logMessage.emit(f'Error: {ret}')
 
     def sendtrig(self):
-        self.dvm.write('INIT3 (@101:103)')
+        self.dvm.write('INIT3 (@101:104)')
         self.dvm.write('*TRG')
 
     @pyqtSlot()
@@ -205,38 +203,40 @@ class Meas(QObject):
         self._stop = False
         self._stop_event.clear()
         self.isidle = False
-        self.switch(self.switch_normal)
-        self._stop_event.wait(1.0)      # relay settle time
-        if self._stop:
+        try:
+            self.switch(self.switch_normal)
+            self._stop_event.wait(1.0)      # relay settle time
+            if self._stop:
+                return
+            self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g2=self.g2,
+                                           N=self.Npts, chunk_periods=self.chunk_periods,
+                                           fit_cache=self.initial_fit_cache)
+            for self.co in range(self.Npts):
+                if self._stop:
+                    break
+                self.prepForMeas()
+                if self._stop:          # stop pressed during SG setup — skip this point
+                    break
+                self.sendtrig()
+                acq_time = self.nsamp / self.fsamp
+                self._stop_event.wait(acq_time + 0.5)  # interruptible; +0.5 s margin for trigger latency
+                try:
+                    self.getvals()
+                except Exception as e:
+                    self.logMessage.emit(f"Point {self.co} failed ({type(e).__name__}: {e}) — discarding set")
+                if self._stop:
+                    break
+            if not self._stop and self.rawN.is_complete:
+                self.rawN.calc()
+                self.dataReady.emit(self.rawN)
+            elif not self._stop:
+                self.logMessage.emit(
+                    f'set incomplete: {self.rawN._n_filled}/{self.rawN.N} pts acquired — skipping')
+        except Exception as e:
+            self.logMessage.emit(f'Meas fatal error: {type(e).__name__}: {e}')
+        finally:
             self.isidle = True
             self.finished.emit()
-            return
-        self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g2=self.g2,
-                                       N=self.Npts, chunk_periods=self.chunk_periods,
-                                       fit_cache=self.initial_fit_cache)
-        for self.co in range(self.Npts):
-            if self._stop:
-                break
-            self.prepForMeas()
-            if self._stop:          # stop pressed during SG setup — skip this point
-                break
-            self.sendtrig()
-            acq_time = self.nsamp / self.fsamp
-            self._stop_event.wait(acq_time + 0.5)  # interruptible; +0.5 s margin for trigger latency
-            try:
-                self.getvals()
-            except Exception as e:
-                self.logMessage.emit(f"Point {self.co} failed ({type(e).__name__}: {e}) — discarding set")
-            if self._stop:
-                break
-        self.isidle = True
-        if not self._stop and self.rawN.is_complete:
-            self.rawN.calc()
-            self.dataReady.emit(self.rawN)
-        elif not self._stop:
-            self.logMessage.emit(
-                f'set incomplete: {self.rawN._n_filled}/{self.rawN.N} pts acquired — skipping')
-        self.finished.emit()
         if self._owns_instruments:
             for res in (self.sg1, self.dvm):
                 try:
@@ -271,12 +271,13 @@ class Meas(QObject):
             ch1 = self._fetch(102)
 
         ch3 = self._fetch(103)
+        ch4 = self._fetch(104)
         if self.saverawdata:
             now = datetime.datetime.now()
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             bd = os.path.join(self.bdraw, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"))
             os.makedirs(bd, exist_ok=True)
             fn = os.path.join(bd, f"ceramic_raw_{timestamp}.npz")
-            np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3)
-        self.rawN.setPoint(self.co, ch1, ch2, ch3, self.V1rb, self.V2rb, time.time())
+            np.savez_compressed(fn, ch1=ch1, ch2=ch2, ch3=ch3, ch4=ch4)
+        self.rawN.setPoint(self.co, ch1, ch2, ch3, self.V1rb, self.V2rb, time.time(), ch4=ch4)
         self.dataSetReady.emit(self.rawN.Data[self.co])

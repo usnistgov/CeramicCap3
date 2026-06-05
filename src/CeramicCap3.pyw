@@ -7,7 +7,6 @@ import datetime
 import time
 import mplwidget
 import numpy as np
-import R2FMath
 import serial
 import serial.tools.list_ports
 import TZA
@@ -56,6 +55,24 @@ def pick_fsamp(fsig, fsamp_max=800000.0):
     return fsamp_max
 
 
+def _lp(f, f0=2e4, Q=0.5):
+    return f0*f0 / (f0*f0 - f*f + f0/Q * 1j*f)
+
+def _calcI1(f, C1, V1, R=50):
+    iw = 1j * f * 2 * np.pi
+    return iw * C1 / (1 + iw * R * C1) * V1
+
+def newgainvalue2(f, C1, dV=0.01, Vmax=0.1):
+    if C1==1e-5:
+        return 1
+    dI1 = _calcI1(f, C1, dV, R=50)
+    gain = 10 ** np.round(np.log10(Vmax / np.abs(dI1 * 1e3 * _lp(f))))
+    return float(np.clip(gain, 1, 100000))
+
+def mingainvalue2(flist, C1):
+    return min(newgainvalue2(f, C1) for f in flist)
+
+
 class MainWindow(QMainWindow):
     stopDVM = pyqtSignal()
     resetDone = pyqtSignal()
@@ -95,6 +112,7 @@ class MainWindow(QMainWindow):
         self.Z1_learned = {}
         self._freq_converged = False
         self._started_from_V1_learned = False
+        self._prev_V1b = None
         self.fsigold = -1
         self.rData = CustomData.NPoints(1000, 800000)
         self.rSet = CustomData.ThreeChannels(1000, 800000, 2, [], [], [], 0, 0, 0, ts=-1)
@@ -262,8 +280,11 @@ class MainWindow(QMainWindow):
             self.progressBar.setRange(0, self.Npts)
         self.fixg2 = self.config.fixg2
         self._SAT_THRESHOLD = self.config.sat_threshold
-        self.fixed_g2 = R2FMath.mingainvalue2(self.flist, self.C1) if self.fixg2 else None
+        self.fixed_g2 = mingainvalue2(self.flist, self.C1) if self.fixg2 else None
         if self.C1 >= 1e-5:   # 10 µF cap: TZA gain must be 1
+            self.fixg2 = True
+            self.fixed_g2 = 1
+        if self.config.fixgain_to_one:
             self.fixg2 = True
             self.fixed_g2 = 1
         if self.le_fixed_g2 is not None:
@@ -364,6 +385,7 @@ class MainWindow(QMainWindow):
                 self.warmup_count = 0
                 self.meta_V1rb = []
                 self.meta_eta3 = []
+                self._prev_V1b = None
                 old_rData.strip_raw()
                 return  # discard saturated measurement; next goagain() uses the reduced gain
             # Already at minimum gain — try increasing the DAQ range before proceeding
@@ -376,6 +398,7 @@ class MainWindow(QMainWindow):
                     self.warmup_count = 0
                     self.meta_V1rb = []
                     self.meta_eta3 = []
+                    self._prev_V1b = None
                     old_rData.strip_raw()
                     return
             except ValueError:
@@ -395,6 +418,7 @@ class MainWindow(QMainWindow):
             self.warmup_count = 0
             self.meta_V1rb = []
             self.meta_eta3 = []
+            self._prev_V1b = None
             old_rData.strip_raw()
             return  # discard low-signal measurement; next goagain() uses the boosted gain
 
@@ -403,13 +427,21 @@ class MainWindow(QMainWindow):
         v4m = self.rData.Res['eta3_mean']
         self.meta_V1rb.append(self.rData.Res['V1rb_center'])
         self.meta_eta3.append(self.rData.Res['eta3_mean'])
-        V1rb_best = self.calc_V1rb_best()
+        # Reduce V1bo step size when far from balance — prevents chaotic jumps on first sweep
+        # when calcVsmall gave a poor starting point (e.g. stale C1_eff from lower frequency).
+        if abs(v4m) > self.eta3_limit * 10:
+            dyn_step_frac = 0.15
+        elif abs(v4m) > self.eta3_limit * 3:
+            dyn_step_frac = min(self.max_step_frac, 0.40)
+        else:
+            dyn_step_frac = self.max_step_frac
+        V1rb_best = self.calc_V1rb_best(max_step_frac=dyn_step_frac)
         _v1bo_clamped = True   # conservative default: don't update C1_eff unless converged
         if V1rb_best is not None:
             if np.isfinite(V1rb_best.real) and np.isfinite(V1rb_best.imag):
                 V1_center_approx = complex(np.mean(self.meta_V1rb))
                 step_mag = abs(V1rb_best - V1_center_approx)
-                max_step_approx = self.max_step_frac * abs(V1_center_approx) + 0.05
+                max_step_approx = dyn_step_frac * abs(V1_center_approx) + 0.05
                 _v1bo_clamped = step_mag >= 0.9 * max_step_approx
                 clamp_flag = ' [clamped]' if _v1bo_clamped else ''
                 V1bo_str = f'  V1bo={V1rb_best:.5f}{clamp_flag}'
@@ -418,8 +450,15 @@ class MainWindow(QMainWindow):
                 V1bo_str = f'  V1bo=non-finite({V1rb_best})'
         else:
             V1bo_str = ''
-        _converged = abs(v4m) < self.eta3_limit
-        self.myprint(f"fit m={m:.2f}  c={v4m:.4f}  |c|={abs(v4m):.4f}/{self.eta3_limit:.4f}  V1b={self.rData.Res['V1_balance']:.5f}{V1bo_str}")
+        V1b_now = self.rData.Res['V1_balance']
+        V1b_stable = (self._prev_V1b is not None and
+                      self.warmup_count >= 3 and
+                      abs(v4m) < self.eta3_limit * 10 and
+                      abs(V1b_now - self._prev_V1b) < 0.001)
+        self._prev_V1b = V1b_now
+        _converged = abs(v4m) < self.eta3_limit or V1b_stable
+        conv_flag = ' [V1b-stable]' if (V1b_stable and abs(v4m) >= self.eta3_limit) else ''
+        self.myprint(f"fit m={m:.2f}  c={v4m:.4f}  |c|={abs(v4m):.4f}/{self.eta3_limit:.4f}  V1b={V1b_now:.5f}{V1bo_str}{conv_flag}")
         if self.rData.goodData:
             self.warmup_count += 1
             if _converged:
@@ -440,6 +479,7 @@ class MainWindow(QMainWindow):
                 self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
                 self.meta_V1rb = []
                 self.meta_eta3 = []
+                self._prev_V1b = None
                 self.myprint(f'  V1_learned stale (|c|={abs(v4m):.3f})—reset to calcVsmall {self.V1:.5f}')
         else:
             self.myprint('  goodData=False — non-finite combined3, point discarded')
@@ -457,6 +497,7 @@ class MainWindow(QMainWindow):
                     self.warmup_count = 0
                     self.meta_V1rb = []
                     self.meta_eta3 = []
+                    self._prev_V1b = None
                     self.myprint(f"straight done at {self.fsig/1000:.4g} kHz — switching to cross")
                 else:                       # sw1 complete — save and advance
                     self.saveData(self.fsig)
@@ -481,6 +522,17 @@ class MainWindow(QMainWindow):
         I1 = V2 * iw * C2 / (1 + iw * C2 * R)
         if f in self.Z1_learned:
             Z_C1 = self.Z1_learned[f]
+        elif self.Z1_learned:
+            # No exact match — use nearest lower (or nearest overall) learned impedance.
+            # Adjacent log-spaced frequencies differ by ~1.26×, so this gives a much
+            # better starting point than the scalar C1_eff, especially at high frequencies
+            # where MLCC dispersion causes C1_eff to change rapidly between points.
+            lower_freqs = [k for k in self.Z1_learned if k <= f]
+            if lower_freqs:
+                f_near = max(lower_freqs)
+            else:
+                f_near = min(self.Z1_learned.keys(), key=lambda k: abs(k - f))
+            Z_C1 = self.Z1_learned[f_near]
         elif self.C1_eff is not None:
             Z_C1 = 1.0 / (iw * self.C1_eff)
         else:
@@ -506,8 +558,9 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         self.run_description = desc.strip()
-        self.config_editor.save()       # triggers configSaved → parseconfig
-        self.circuit_setup.save_config()
+        self.circuit_setup.save_config()  # write new C1/C2/SN to config.ini first
+        self.config_editor.save()         # save MEAS settings; triggers parseconfig
+        self.parseconfig()                # re-read so C1/C2/SN from circuit_setup are picked up
         self.measuring = True
         desc = self.run_description
         if desc:
@@ -521,17 +574,22 @@ class MainWindow(QMainWindow):
         self.buStop.setStyleSheet('background-color: #c0392b; color: white; font-weight: bold;')
         self.allData = CustomData.AllData()
         self.runDataDir = self.ensureDir()
+        self.run_start_time = time.time()
+        _dt = datetime.datetime.fromtimestamp(self.run_start_time)
+        _valname = self.config.recapdir[self.C1] + '-' + self.config.recapdir[self.C2]
+        _tag = _dt.strftime('%Y%m%d_%H%M')
+        self.myprint(f'  dir: {self.runDataDir}')
+        self.myprint(f'  file: VOLT7_{_valname}_{_tag}.dat')
         self.meta_V1rb = []
         self.meta_eta3 = []
         self.C1_eff = None
         self.fsig = next((f for f in self.flist if f >= self.config.fstart), self.flist[-1])
         self.fsigold = -1
         self.warmup_count = 0
-        self.v4_range = 3
+        self.v4_range = 0.3
         self.switch_normal = True
         self._run_logged = False
         self.progressBar.setValue(0)
-        self.run_start_time = time.time()
         self.freqs_done = 0
         try:
             start_idx = self.flist.index(self.fsig)
@@ -563,7 +621,17 @@ class MainWindow(QMainWindow):
             fit_cache = self.rData._fit_cache if self.fsigold == self.fsig else {}
             self.mydvm = Meas(self.mutex, self.Npts, self.rawdatadir, self.saverawdata, cur_fsamp, cur_nsamp, chunk_periods=10, max_nhars=self.config.max_nhars, v4_range=self.v4_range, switch_normal=self.switch_normal, fit_cache=fit_cache, sg1=self._sg1, dvm=self._dvm, rm=self._rm)
             self.mydvm.moveToThread(self.thread)
-            self.tza2.set_fgain(self.g2)
+            try:
+                self.tza2.set_fgain(self.g2)
+            except IOError as e:
+                self.myprint(f'WARNING: TZA communication error: {e} — retrying once')
+                try:
+                    self.tza2.close_port()
+                    self.tza2.set_fgain(self.g2)
+                except Exception as e2:
+                    self.myprint(f'ERROR: TZA retry failed: {e2} — stopping measurement')
+                    self.measuring = False
+                    return
             if self.fsigold == self.fsig:
                 while np.abs(self.V1) > 9:
                     self.V1 = self.V1*0.9
@@ -571,7 +639,7 @@ class MainWindow(QMainWindow):
                 self.mydvm.storeV(self.V1, self.V2, self.dV, self.fsig, self.g2)
             else:
                 self.myprint(f"  {self.fsig/1000:.4g} kHz  fsamp={cur_fsamp/1000:.4g} kHz  ".center(64, '-'))
-                tempgain2 = R2FMath.newgainvalue2(self.fsig, self.C1, dV= self.dV,Vmax=3)
+                tempgain2 = newgainvalue2(self.fsig, self.C1, dV=self.dV, Vmax=3)
                 self.g2 = self.fixed_g2 if self.fixg2 else tempgain2
                 C1_used = self.C1_eff if self.C1_eff is not None else self.C1
                 self.myprint(f'getgain C1_used={C1_used:.3e} (nom {self.C1:.1e}) tempgain2={tempgain2} g2={self.g2}')
@@ -584,6 +652,7 @@ class MainWindow(QMainWindow):
                 self.sblabel.setText(f"warming up at {self.fsig/1000:5.2f} kHz")
                 self.meta_V1rb = []
                 self.meta_eta3 = []
+                self._prev_V1b = None
                 self.V2 = -9.9+0j
                 if self.fsig in self.V1_learned:
                     self.V1 = self.V1_learned[self.fsig]
@@ -592,7 +661,14 @@ class MainWindow(QMainWindow):
                 else:
                     self._started_from_V1_learned = False
                     self.V1 = self.calcVsmall(self.fsig, V2=self.V2)
-                    src = 'Z1learned' if self.fsig in self.Z1_learned else 'calcVsmall'
+                    if self.fsig in self.Z1_learned:
+                        src = 'Z1learned'
+                    elif self.Z1_learned:
+                        _lf = [k for k in self.Z1_learned if k <= self.fsig]
+                        _fn = max(_lf) if _lf else min(self.Z1_learned, key=lambda k: abs(k - self.fsig))
+                        src = f'Z1near({_fn/1000:.4g}kHz)'
+                    else:
+                        src = 'calcVsmall'
                     self.myprint(f'  V1={src} {self.V1:.5f}  V2={self.V2:.5f}')
                 while np.abs(self.V1) > 9:
                     self.V2 *= 0.9
@@ -630,7 +706,7 @@ class MainWindow(QMainWindow):
         self.rSet = MySet
         self.progressBar.setValue(MySet.i+1)
         if MySet.ts > 0:
-            for j in range(3):
+            for j in range(len(MySet.Data)):
                 self.livePhasors[j].append(MySet.Data[j].Vc)
         currentTab = self.tabWidget.master.tabText(self.tabWidget.master.currentIndex())
         if currentTab == 'scatter':
@@ -688,6 +764,15 @@ class MainWindow(QMainWindow):
         return bd0
 
     def saveData(self, f):
+        try:
+            self._saveData_inner(f)
+        except Exception as e:
+            self.myprint(f'  ERROR in saveData: {e}')
+            import traceback
+            self.myprint(traceback.format_exc())
+
+    def _saveData_inner(self, f):
+        self.myprint(f'  saveData called f={f/1000:.4g} kHz')
         bd0 = self.runDataDir
         dt = datetime.datetime.fromtimestamp(self.run_start_time)
         valname = self.config.recapdir[self.C1] + '-' + self.config.recapdir[self.C2]
@@ -706,13 +791,14 @@ class MainWindow(QMainWindow):
             import shutil
             shutil.copy2(self.config.cfgpath, os.path.join(bd0, fn_conf))
 
-        # VOLT6_: raw phasors, one row per measurement point
+        # VOLT7_: raw phasors, one row per measurement point (4 channels)
         df_volt = self.allData.getRawPhasors(f, self.run_start_time)
-        volt_path = os.path.join(bd0, f'VOLT6_{valname}_{tag}.dat')
+        volt_path = os.path.join(bd0, f'VOLT7_{valname}_{tag}.dat')
         if not os.path.exists(volt_path):
             with open(volt_path, 'w') as fh:
                 fh.write(f'# {self.run_description}\n')
                 fh.write('# ' + ' '.join(df_volt.columns) + '\n')
+            self.myprint(f'  VOLT7: {bd0}  {os.path.basename(volt_path)}')
         df_volt.to_csv(volt_path, mode='a', sep=' ', index=False, header=False, float_format='%.8g')
 
         # CC6_: one row per ellipse sweep; expand complex columns to re_/im_ pairs
@@ -740,33 +826,44 @@ class MainWindow(QMainWindow):
             V1 = np.array(self.livePhasors[0])
             V2 = np.array(self.livePhasors[1])
             V3 = np.array(self.livePhasors[2])
+            V4 = np.array(self.livePhasors[3]) if self.livePhasors[3] else None
             p2 = V2/V1 if show_eta else V2
             p3 = V3/V1 if show_eta else V3
             for sl, mk in [(slice(None, None, 2), '+'), (slice(1, None, 2), 'x')]:
                 self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1[sl]), np.imag(V1[sl]), 'r' + mk)
                 self.scatterplots[0, 1].canvas.ax1.plot(np.real(p2[sl]), np.imag(p2[sl]), 'g' + mk)
                 self.scatterplots[1, 0].canvas.ax1.plot(np.real(p3[sl]), np.imag(p3[sl]), 'b' + mk)
+                if V4 is not None:
+                    p4 = V4/V1 if show_eta else V4
+                    self.scatterplots[1, 1].canvas.ax1.plot(np.real(p4[sl]), np.imag(p4[sl]), 'm' + mk)
         elif self.rData.Res['ts'] > 0:
             V1 = self.rData.raw3[:, 0]
             V2 = self.rData.raw3[:, 1]
             V3 = self.rData.raw3[:, 2]
+            V4 = getattr(self.rData, 'raw_v4', None)
             p2 = V2/V1 if show_eta else V2
             p3 = V3/V1 if show_eta else V3
             for sl, mk in [(slice(None, None, 2), 'o'), (slice(1, None, 2), 's')]:
                 self.scatterplots[0, 0].canvas.ax1.plot(np.real(V1[sl]), np.imag(V1[sl]), 'r' + mk)
                 self.scatterplots[0, 1].canvas.ax1.plot(np.real(p2[sl]), np.imag(p2[sl]), 'g' + mk)
                 self.scatterplots[1, 0].canvas.ax1.plot(np.real(p3[sl]), np.imag(p3[sl]), 'b' + mk)
+                if V4 is not None:
+                    p4 = V4/V1 if show_eta else V4
+                    self.scatterplots[1, 1].canvas.ax1.plot(np.real(p4[sl]), np.imag(p4[sl]), 'm' + mk)
 
         ax00 = self.scatterplots[0, 0].canvas.ax1
         ax01 = self.scatterplots[0, 1].canvas.ax1
         ax10 = self.scatterplots[1, 0].canvas.ax1
+        ax11 = self.scatterplots[1, 1].canvas.ax1
         ax00.set_xlabel('Re(V1) / V'); ax00.set_ylabel('Im(V1) / V')
         if show_eta:
             ax01.set_xlabel('Re(eta2)'); ax01.set_ylabel('Im(eta2)')
             ax10.set_xlabel('Re(eta3)'); ax10.set_ylabel('Im(eta3)')
+            ax11.set_xlabel('Re(eta4)'); ax11.set_ylabel('Im(eta4)')
         else:
             ax01.set_xlabel('Re(V2) / V'); ax01.set_ylabel('Im(V2) / V')
             ax10.set_xlabel('Re(V3) / V'); ax10.set_ylabel('Im(V3) / V')
+            ax11.set_xlabel('Re(V4) / V'); ax11.set_ylabel('Im(V4) / V')
 
         for j in range(2):
             for i in range(2):
@@ -1071,6 +1168,9 @@ class MainWindow(QMainWindow):
         self.rawplots[0, 0].canvas.ax1.plot(t[be:en], self.rSet.Data[0].fv[be:en], 'k-')
         self.rawplots[0, 1].canvas.ax1.plot(t[be:en], self.rSet.Data[1].fv[be:en], 'k-')
         self.rawplots[1, 0].canvas.ax1.plot(t[be:en], self.rSet.Data[2].fv[be:en], 'k-')
+        if len(self.rSet.Data) >= 4:
+            self.rawplots[1, 1].canvas.ax1.plot(t[be:en], self.rSet.Data[3].data[be:en], 'm.')
+            self.rawplots[1, 1].canvas.ax1.plot(t[be:en], self.rSet.Data[3].fv[be:en], 'k-')
         for j in range(2):
             for i in range(2):
                 self.rawplots[i, j].canvas.draw()

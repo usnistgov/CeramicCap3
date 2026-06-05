@@ -30,6 +30,7 @@ class CCC():
         self.decay = float(self.meas.get('DECAY', '0.85'))
         self.nellipse = int(self.meas.get('NELLIPSE', '8'))
         self.fixg2 = self.cp['MEAS'].getboolean('fixg2', fallback=False)
+        self.fixgain_to_one = self.cp['MEAS'].getboolean('fixgain_to_one', fallback=False)
         self.sat_threshold = float(self.meas.get('SATTHRESHOLD', '10.0'))
         self.max_nhars = int(self.meas.get('MAXNHARS', '10'))
         self.version = self.meas.get('VERSION', 'unknown')

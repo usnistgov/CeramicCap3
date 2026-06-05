@@ -17,7 +17,7 @@ class TZA:
 
     def open_port(self):
         if not self.is_port_open:
-            self.ser = serial.Serial(self.comport, baudrate=115200, bytesize=8, parity='N', stopbits=1, timeout=1000, xonxoff=0, rtscts=0)
+            self.ser = serial.Serial(self.comport, baudrate=115200, bytesize=8, parity='N', stopbits=1, timeout=2, xonxoff=0, rtscts=0)
             resp=self.get_resp(b'$U') #start command
             self.is_port_open=True
 
@@ -73,9 +73,11 @@ class TZA:
         resp=self.get_resp(b'B1') #ser bandwith 1,2,3,4 1=10 kHz, 2- 1 kHz, 3 = 100 Hz, 4 = 10Hz
         self.get_settings()
 
-    def get_resp(self,cmd):
-        self.ser.write(cmd)    
-        ret =self.ser.read_until(b'\r')#
+    def get_resp(self, cmd):
+        self.ser.write(cmd)
+        ret = self.ser.read_until(b'\r')
+        if not ret:
+            raise IOError(f'TZA no response to {cmd!r} (serial timeout)')
         return ret
 
 

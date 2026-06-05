@@ -234,7 +234,7 @@ class SampleData:
 
 class ThreeChannels:
     def __init__(self, fsig, fsamp, Nhars, ch1, ch2, ch3, V1c, V2c, i, ts,
-                 chunk_periods=0, fit_cache=None):
+                 chunk_periods=0, fit_cache=None, ch4=None):
         self.ts            = ts
         self.fsig          = fsig
         self.fsamp         = fsamp
@@ -248,6 +248,8 @@ class ThreeChannels:
         self.Data.append(SampleData(fsig, fsamp, ch1, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch2, Nhars, chunk_periods))
         self.Data.append(SampleData(fsig, fsamp, ch3, Nhars, chunk_periods))
+        if ch4 is not None:
+            self.Data.append(SampleData(fsig, fsamp, ch4, Nhars, chunk_periods))
 
         if fit_cache is not None and 'fsig' in fit_cache:
             # Reuse frequency and precomputed matrices from earlier point at same frequency
@@ -277,14 +279,15 @@ class ThreeChannels:
         for d in self.Data:
             d.Vc = d.Vc / v2_phase
 
-        # Build per-chunk phasor matrix (n_chunks × 3): rotate each chunk by V2's phase
+        # Build per-chunk phasor matrix (n_chunks × n_channels): rotate each chunk by V2's phase
         chunks0 = self.Data[1].Vc_chunks
         if chunks0 is not None and len(chunks0) > 1:
             n_ch = min(len(d.Vc_chunks) for d in self.Data if d.Vc_chunks is not None)
-            self.phasor_chunks = np.zeros((n_ch, 3), dtype=complex)
+            n_chan = len(self.Data)
+            self.phasor_chunks = np.zeros((n_ch, n_chan), dtype=complex)
             for k in range(n_ch):
                 cf_k = np.exp(-1j * np.angle(chunks0[k]))
-                for j in range(3):
+                for j in range(n_chan):
                     self.phasor_chunks[k, j] = self.Data[j].Vc_chunks[k] * cf_k
 
     def strip_raw(self):
@@ -308,13 +311,14 @@ class NPoints:
         self.Res['ts']    = -1.0
         self.Data = np.zeros(N, dtype=object)
 
-    def setPoint(self, i, ch1, ch2, ch3, V1c, V2c, ts):
+    def setPoint(self, i, ch1, ch2, ch3, V1c, V2c, ts, ch4=None):
         self.V1c = V1c
         self.Data[i] = ThreeChannels(
             self.Res['fsig'], self.Res['fsamp'], self.Res['Nhars'],
             ch1, ch2, ch3, V1c, V2c, i, ts,
             chunk_periods=self.chunk_periods,
             fit_cache=self._fit_cache,
+            ch4=ch4,
         )
         self.ats[i] = ts
         self._n_filled += 1
@@ -328,11 +332,15 @@ class NPoints:
     def precalc(self):
         self.raw3 = np.zeros((self.N, 3), dtype=complex)
         self.ctrl = np.zeros((self.N, 2), dtype=complex)
+        has_ch4 = len(self.Data[0].Data) >= 4
+        self.raw_v4 = np.zeros(self.N, dtype=complex) if has_ch4 else None
         for i in range(self.N):
-            phi = np.angle(self.Data[i].Data[0].Vc)
+            phi = np.angle(self.Data[i].Data[1].Vc)
             cf = np.exp(-1j * phi)
             for j in range(3):
                 self.raw3[i, j] = self.Data[i].Data[j].Vc * cf
+            if has_ch4:
+                self.raw_v4[i] = self.Data[i].Data[3].Vc * cf
             self.ctrl[i, 0] = self.Data[i].V1c
             self.ctrl[i, 1] = self.Data[i].V2c
         self.ctrla = self.ctrl
@@ -501,15 +509,20 @@ class AllData():
 
     def getRawPhasors(self, f, t0=0):
         COLS = ['frequency/Hz', 't/s',
-                'reV1', 'imV1', 'reV2', 'imV2', 'reTZA', 'imTZA',
+                'reV1', 'imV1', 'reV2', 'imV2', 'reV3', 'imV3', 'reV4', 'imV4',
                 'reV1set', 'imV1set', 'reV2set', 'imV2set',
                 'gain2', 'fsamp', 'swpos']
         rows = []
         for obj in self.entries(f):
+            has_v4 = getattr(obj, 'raw_v4', None) is not None
             for j in range(obj.raw3.shape[0]):
                 row = [f, obj.Res['ts'] - t0]
                 for k in range(obj.raw3.shape[1]):
                     row += [obj.raw3[j, k].real, obj.raw3[j, k].imag]
+                if has_v4:
+                    row += [obj.raw_v4[j].real, obj.raw_v4[j].imag]
+                else:
+                    row += [0.0, 0.0]
                 for k in range(obj.ctrla.shape[1]):
                     row += [obj.ctrla[j, k].real, obj.ctrla[j, k].imag]
                 row += [int(obj.Res['gain2']), int(obj.Res['fsamp']), int(obj.Res.get('switch_pos', 0))]
