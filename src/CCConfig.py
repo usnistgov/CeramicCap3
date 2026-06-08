@@ -25,12 +25,12 @@ class CCC():
         self.logdir     = self.meas['LOGDIR']
         self.rawdatadir = self.meas['RAWDATADIR']
         self.saverawdata = self.cp['MEAS'].getboolean('saverawdata', fallback=False)
-        self.eta3_limit = float(self.meas.get('ETA3LIMIT', '0.01'))
         self.max_step_frac = float(self.meas.get('MAXSTEPFRAC', '0.50'))
         self.decay = float(self.meas.get('DECAY', '0.85'))
+        self.alpha = float(self.meas.get('ALPHA', '1.000'))
+        self.force3vrange = self.cp['MEAS'].getboolean('force3vrange', fallback=False)
+        self.convergence_count = int(self.meas.get('CONVERGENCECOUNT', '2'))
         self.nellipse = int(self.meas.get('NELLIPSE', '8'))
-        self.fixg2 = self.cp['MEAS'].getboolean('fixg2', fallback=False)
-        self.fixgain_to_one = self.cp['MEAS'].getboolean('fixgain_to_one', fallback=False)
         self.sat_threshold = float(self.meas.get('SATTHRESHOLD', '10.0'))
         self.max_nhars = int(self.meas.get('MAXNHARS', '10'))
         self.version = self.meas.get('VERSION', 'unknown')
@@ -51,17 +51,6 @@ class CCC():
     def save(self):
         with open(self.cfgpath,'w') as configfile:
             self.cp.write(configfile)
-
-    def gain2(self,button, checked):
-        if checked:
-            k1='MEAS'
-            k2='gain2'
-            self.cp[k1][k2]=button.text()
-            self.save()
-
-    def setGains(self, g2):
-        self.cp['MEAS']['gain2'] = str(int(g2))
-        self.save()
 
 
 

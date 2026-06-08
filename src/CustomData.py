@@ -296,9 +296,10 @@ class ThreeChannels:
 
 
 class NPoints:
-    def __init__(self, fsig, fsamp, Nhars=1, g2=1, ratio=10, N=8, chunk_periods=0, fit_cache=None):
+    def __init__(self, fsig, fsamp, Nhars=1, ratio=10, N=8, chunk_periods=0, fit_cache=None, alpha=1.0):
         self.N             = N
         self.chunk_periods = chunk_periods
+        self.alpha         = alpha
         self._fit_cache    = fit_cache if fit_cache is not None else {}
         self._n_filled     = 0
         self.Res = {}
@@ -306,7 +307,6 @@ class NPoints:
         self.Res['ratio'] = ratio
         self.Res['fsamp'] = fsamp
         self.Res['Nhars'] = Nhars
-        self.Res['gain2'] = g2
         self.ats = -1.0 * np.ones(N)
         self.Res['ts']    = -1.0
         self.Data = np.zeros(N, dtype=object)
@@ -330,17 +330,13 @@ class NPoints:
         return self._n_filled == self.N
 
     def precalc(self):
-        self.raw3 = np.zeros((self.N, 3), dtype=complex)
+        self.raw4 = np.zeros((self.N, 4), dtype=complex)
         self.ctrl = np.zeros((self.N, 2), dtype=complex)
-        has_ch4 = len(self.Data[0].Data) >= 4
-        self.raw_v4 = np.zeros(self.N, dtype=complex) if has_ch4 else None
         for i in range(self.N):
             phi = np.angle(self.Data[i].Data[1].Vc)
             cf = np.exp(-1j * phi)
-            for j in range(3):
-                self.raw3[i, j] = self.Data[i].Data[j].Vc * cf
-            if has_ch4:
-                self.raw_v4[i] = self.Data[i].Data[3].Vc * cf
+            for j in range(4):
+                self.raw4[i, j] = self.Data[i].Data[j].Vc * cf
             self.ctrl[i, 0] = self.Data[i].V1c
             self.ctrl[i, 1] = self.Data[i].V2c
         self.ctrla = self.ctrl
@@ -374,45 +370,57 @@ class NPoints:
 
     def calc(self):
         self.precalc()
-        self.V1m = self.raw3[:, 0]
-        self.V2m = self.raw3[:, 1]
-        self.V3m = self.raw3[:, 2]
+        self.V1m = self.raw4[:, 0]
+        self.V2m = self.raw4[:, 1]
+        self.V3m = self.raw4[:, 2]
+        self.V4m = self.raw4[:, 3]
+
+        self.V1ctr = np.mean(self.V1m)
+        self.V2ctr = np.mean(self.V2m)
+        self.V3ctr = np.mean(self.V3m)
+        self.V4ctr = np.mean(self.V4m)
+
+        self.V1ctrd = self.V1m-np.mean(self.V1m)
+        self.V2ctrd = self.V2m-np.mean(self.V2m)
+        self.V3ctrd = self.V3m-np.mean(self.V3m)
+        self.V4ctrd = self.V4m-np.mean(self.V4m)
+
+        self.Res['dV1max'] = np.max(np.abs( self.V1ctrd))
+        self.Res['dV2max'] = np.max(np.abs( self.V2ctrd))
+        self.Res['dV3max'] = np.max(np.abs( self.V3ctrd))
+        self.Res['dV4max'] = np.max(np.abs( self.V4ctrd))
+
+        self.V1rb = self.ctrla[:, 0]
+        self.V1rbctr = np.mean(self.V1rb)
+        self.V1rbctrd = self.V1rb - np.mean(self.V1rb)
+
+        Vv     = self.alpha * self.V3m + (1.0 - self.alpha) * self.V4m
+        Vvctr  = np.mean(Vv)
+        Vvctrd = Vv - Vvctr
+
+        A = np.column_stack([self.V1rbctrd])
+        sol, *_ = np.linalg.lstsq(A, Vvctrd, rcond=None)
+
+        self.Res['V1rb_center'] = self.V1rbctr
+        self.Res['eta3fit_slope'] = sol[0]
+        self.Res['eta3_mean'] = Vvctr / self.V1ctr
+        self.Res['V1_balance'] = self.V1rbctr - Vvctr / sol[0]
+
         self.eta2 = self.V2m / self.V1m
         self.eta3 = self.V3m / self.V1m
 
-        eta2_fit, eta3_fit = self._build_fit_etas()
-
-        Xmat = np.column_stack([eta2_fit, np.ones(len(eta2_fit))])
-        (m4, c4), _, _, _ = np.linalg.lstsq(Xmat, eta3_fit, rcond=None)
-        self.gamma3 = 1.0 / m4
-        self.Res['Vz3'] = c4 / m4
-        self.Res['gamma3'] = self.gamma3
-        V4_raw  = np.array([self.Data[k].Data[2].Vc for k in range(self.N)])
-        V1_meas = np.array([self.Data[k].Data[0].Vc for k in range(self.N)])
-        eta3 = V4_raw / V1_meas
-        V1rb_pts = self.ctrla[:, 0]
-        V1rb_center = np.mean(V1rb_pts)
-        Xmat = np.column_stack([V1rb_pts - V1rb_center, np.ones(self.N)])
-        (m_bal, c_bal), _, _, _ = np.linalg.lstsq(Xmat, eta3, rcond=None)
-        step = c_bal / m_bal
-        dV1_spread = np.std(V1rb_pts)
-        step_limit = 5 * dV1_spread
-        if np.abs(step) > step_limit:
-            step = step * step_limit / np.abs(step)
-        self.Res['eta3fit_slope'] = m_bal
-        self.Res['eta3fit_intercept'] = c_bal
-        self.Res['eta3_mean'] = np.mean(eta3)
-        self.Res['V1rb_center'] = V1rb_center
-        self.Res['V1_balance'] = V1rb_center - 0.5 * step
-
-        self.combined3 = self.gamma3 * self.eta3 - self.eta2
-
+        highdV = self.V1m - self.V3m
+        lowdV = -self.V2m + self.V4m
+        self.combined3 = highdV / lowdV
+        calc_ratio = np.mean(self.combined3)
+        self.Res['Vz3'] = calc_ratio
         ratio = self.Res['ratio']
-        self.alpha3 = np.real(self.combined3) / ratio - 1
-        self.beta3  = np.imag(self.combined3) / ratio
-        self.Res['alpha3mean'] = np.mean(self.alpha3)
-        self.Res['beta3mean']  = np.mean(self.beta3)
+        self.alpha3 = np.real(calc_ratio) / ratio - 1
+        self.beta3  = np.imag(calc_ratio) / ratio
+        self.Res['alpha3mean'] = float(self.alpha3)
+        self.Res['beta3mean']  = float(self.beta3)
         self.Res['V1cReadback'] = self.V1c
+        self.Res['V3_V4_diff'] = np.mean(self.V3m - self.V4m)
 
         self.setGoodFlag()
 
@@ -511,26 +519,21 @@ class AllData():
         COLS = ['frequency/Hz', 't/s',
                 'reV1', 'imV1', 'reV2', 'imV2', 'reV3', 'imV3', 'reV4', 'imV4',
                 'reV1set', 'imV1set', 'reV2set', 'imV2set',
-                'gain2', 'fsamp', 'swpos']
+                'dvm_range', 'fsamp', 'swpos']
         rows = []
         for obj in self.entries(f):
-            has_v4 = getattr(obj, 'raw_v4', None) is not None
-            for j in range(obj.raw3.shape[0]):
+            for j in range(obj.raw4.shape[0]):
                 row = [f, obj.Res['ts'] - t0]
-                for k in range(obj.raw3.shape[1]):
-                    row += [obj.raw3[j, k].real, obj.raw3[j, k].imag]
-                if has_v4:
-                    row += [obj.raw_v4[j].real, obj.raw_v4[j].imag]
-                else:
-                    row += [0.0, 0.0]
+                for k in range(4):
+                    row += [obj.raw4[j, k].real, obj.raw4[j, k].imag]
                 for k in range(obj.ctrla.shape[1]):
                     row += [obj.ctrla[j, k].real, obj.ctrla[j, k].imag]
-                row += [int(obj.Res['gain2']), int(obj.Res['fsamp']), int(obj.Res.get('switch_pos', 0))]
+                row += [obj.Res.get('dvm_range', 3), int(obj.Res['fsamp']), int(obj.Res.get('switch_pos', 0))]
                 rows.append(row)
         return pd.DataFrame(rows, columns=COLS)
 
     def getEllipseData(self, f):
-        """One row per NPoints (one ellipse sweep): f, t, ratio, eta2, eta3, gain, gain2, fsamp, swpos."""
+        """One row per NPoints (one ellipse sweep): f, t, ratio, eta2, eta3, gain, fsamp, swpos."""
         rows = []
         for obj in self.entries(f):
             if not hasattr(obj, 'combined3'):
@@ -541,8 +544,7 @@ class AllData():
                 'ratio': complex(np.mean(obj.combined3)),
                 'eta2':  complex(np.mean(obj.eta2)),
                 'eta3':  complex(np.mean(obj.eta3)),
-                'gain':  float(abs(obj.gamma3)),
-                'gain2': int(obj.Res['gain2']),
+                'gain':  float(abs(obj.Res.get('Vz3', float('nan')))),
                 'fsamp': int(obj.Res['fsamp']),
                 'swpos': int(obj.Res.get('switch_pos', 0)),
             })

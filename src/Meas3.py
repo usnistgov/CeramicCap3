@@ -70,11 +70,12 @@ class Meas(QObject):
     dataSetReady = pyqtSignal(CustomData.ThreeChannels)
     logMessage = pyqtSignal(str)
 
-    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, chunk_periods=0, max_nhars=10, v4_range=3, switch_normal=True, fit_cache=None, sg1=None, dvm=None, rm=None):
+    def __init__(self, mutex, NDpts, rawdatadir=r'c:\RAWDATA', saverawdata=False, fsamp=800000, nsamp=80000, chunk_periods=0, max_nhars=10, switch_normal=True, fit_cache=None, alpha=1.0, sg1=None, dvm=None, rm=None):
         self.bdraw = rawdatadir
         self.saverawdata = saverawdata
         self.chunk_periods = chunk_periods
         self.Nhars = max_nhars
+        self.alpha = alpha
         super().__init__()
         self.NDpts = NDpts
         self.Npts = NDpts
@@ -87,7 +88,6 @@ class Meas(QObject):
         self.fsamp = fsamp
         self.nsamp = nsamp
         self.V1_setpoints = None
-        self.v4_range = v4_range        # DAQ voltage range for ch103 (TZA); normally 10 V, 100 V if needed
         self.switch_normal = switch_normal
         self.initial_fit_cache = fit_cache if fit_cache is not None else {}
         if sg1 is not None and dvm is not None:
@@ -106,14 +106,31 @@ class Meas(QObject):
 
     def switch(self,switch_normal=True):
         self.switch_normal =switch_normal
+        s1='(@311,323,335,347)' #row1=col1, row2=col3, row3=col5, row4=col7
+        s2='(@313,321,337,345)' #row1=col3, row2=col1, row3=col7, row4=col5
         if self.switch_normal:
-            self.dvm.write('ROUT:OPEN (@218,241)')
-            self.dvm.write('ROUT:CLOS (@211,248)')        
+            self.dvm.write('ROUT:OPEN '+s1)  # row1 open col8 row4 open col 1
+            self.dvm.write('ROUT:CLOS '+s2)  # row1 clse col1 row4 close col 8
+#            self.dvm.write('ROUT:OPEN (@218,241)')  # row1 open col8 row4 open col 1
+ #           self.dvm.write('ROUT:CLOS (@211,248)')  # row1 clse col1 row4 close col 8
         else:
-            self.dvm.write('ROUT:OPEN (@211,248)')
-            self.dvm.write('ROUT:CLOS (@218,241)')        
+            self.dvm.write('ROUT:OPEN '+s2)  # row1 open col1 row4 open col 8
+            self.dvm.write('ROUT:CLOS '+s1)  # row1 clse col8 row4 close col 1 
+#            self.dvm.write('ROUT:OPEN (@211,248)')  # row1 open col1 row4 open col 8
+#            self.dvm.write('ROUT:CLOS (@218,241)')  # row1 clse col8 row4 close col 1 
 
+    def configure_range(self, V2_daq):
+        """Set all four digitizer channels to the same range based on V2 amplitude at DAQ.
+        Returns the range in volts (0.3 or 3).
+        """
+        rng = 0.3 if V2_daq < 0.6 else 3
+        self.dvm.write(f'ACQ3:VOLT {rng},DIFF,AC,TIME,(@101:104)')
+        #self.dvm.write(f'ACQ3:VOLT 0.3,DIFF,AC,TIME,(@103:104)')
 
+        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
+        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
+        self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
+        return rng
 
     def precmd(self):
         self.sg1.write('UNIT:ANGL DEG')
@@ -124,8 +141,8 @@ class Meas(QObject):
         self.dvm.timeout = 25000
 
         self.dvm.write('FORM3 REAL')
-        self.dvm.write('ACQ3:VOLT 18,DIFF,AC,TIME,(@101:102)')   # V1, V2: large signals
-        self.dvm.write('ACQ3:VOLT 0.3,DIFF,AC,TIME,(@103:104)')  # V3, V4: TZA channels 300 mV
+        self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@101:102)')   # V1, V2: large signals
+        self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@103:104)')  # V3, V4: 300 mV range
         self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
         self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
         self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
@@ -136,13 +153,12 @@ class Meas(QObject):
             print(ostr)
         time.sleep(0.001)
 
-    def storeV(self, V1c, V2c, dV1, fsig, g2):
+    def storeV(self, V1c, V2c, dV1, fsig):
         if self.isidle:
             self.V1c = V1c   # small modulated center
             self.V2c = V2c   # large constant
             self.dV1 = dV1   # modulation radius for V1
             self.fsig = fsig
-            self.g2 = g2
 
     def storeV1pts(self, V1pts):
         if self.isidle:
@@ -208,9 +224,10 @@ class Meas(QObject):
             self._stop_event.wait(1.0)      # relay settle time
             if self._stop:
                 return
-            self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars, g2=self.g2,
+            self.rawN = CustomData.NPoints(self.fsig, self.fsamp, Nhars=self.Nhars,
                                            N=self.Npts, chunk_periods=self.chunk_periods,
-                                           fit_cache=self.initial_fit_cache)
+                                           fit_cache=self.initial_fit_cache,
+                                           alpha=self.alpha)
             for self.co in range(self.Npts):
                 if self._stop:
                     break
@@ -264,14 +281,16 @@ class Meas(QObject):
 
     def getvals(self):
         if self.switch_normal:
-            ch1 = self._fetch(101)
-            ch2 = self._fetch(102)
-        else:
             ch2 = self._fetch(101)
             ch1 = self._fetch(102)
+            ch4 = self._fetch(103)
+            ch3 = self._fetch(104)
+        else:
+            ch1 = self._fetch(101)
+            ch2 = self._fetch(102)
+            ch3 = self._fetch(103)
+            ch4 = self._fetch(104)
 
-        ch3 = self._fetch(103)
-        ch4 = self._fetch(104)
         if self.saverawdata:
             now = datetime.datetime.now()
             timestamp = now.strftime("%Y%m%d_%H%M%S")

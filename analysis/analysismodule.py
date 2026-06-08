@@ -23,7 +23,28 @@ def _parse_capval_pF(s):
     raise ValueError(f"Cannot parse capacitance label: {s!r}")
 
 
-def analyze_block(V1, V2, V3, V4, fsig=None, C2_pF=None, correct_bias=False,
+def analyze_block(V1, V2, V3, V4, nominal=10.0):
+    """
+    Direct bridge formula from circuit voltages.
+
+    V1-V3 is the voltage across C1 (large, DUT).
+    V4-V2 is the voltage across C2 (small, reference).
+    Ratio = (V4-V2)/(V1-V3) = Z_C2/Z_C1 = C1/C2 ≈ nominal (≈10).
+
+    Returns al_right = Re(ratio)/nominal - 1  and  D_right = -Im(ratio)/nominal,
+    matching the key names used by plotalphaf.
+    """
+    ratio = np.mean((V4 - V2) / (V1 - V3))
+    al_right =  ratio.real / nominal - 1
+    D_right  = -ratio.imag / nominal
+    return {
+        'al_right': al_right,
+        'D_right':  D_right,
+        'ratio':    ratio,
+    }
+
+
+def analyze_block_old(V1, V2, V3, V4, fsig=None, C2_pF=None, correct_bias=False,
                   V1rb=None, V2rb=None):
     """
     Core phasor analysis for one ellipse block.

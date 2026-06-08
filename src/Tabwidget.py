@@ -5,9 +5,6 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QWidget,
     QTabWidget,
-    QGroupBox,
-    QFormLayout,
-    QLineEdit,
     QPushButton,
 )
 
@@ -33,20 +30,14 @@ class MyTabWidget(QWidget):
         glayout =  QGridLayout()
         self.mytabs[0].setLayout(glayout)
         glayout.addWidget(parent.circuit_setup, 0, 0)
-        scatter_vbox = QVBoxLayout()
-        self.mytabs[1].setLayout(scatter_vbox)
-        scatter_btn_row = QHBoxLayout()
-        parent.scatter_mode_btn = QPushButton('Show: eta')
-        scatter_btn_row.addWidget(parent.scatter_mode_btn)
-        scatter_btn_row.addStretch()
-        scatter_vbox.addLayout(scatter_btn_row)
         scatter_grid_widget = QWidget()
         scatter_grid = QGridLayout(scatter_grid_widget)
         scatter_grid.setContentsMargins(0, 0, 0, 0)
         for i in range(2):
             for j in range(2):
                 scatter_grid.addWidget(parent.scatterplots[i, j], i, j)
-        scatter_vbox.addWidget(scatter_grid_widget)
+        self.mytabs[1].setLayout(QGridLayout())
+        self.mytabs[1].layout().addWidget(scatter_grid_widget, 0, 0)
         glayout =  QGridLayout()
         self.mytabs[2].setLayout(glayout)
         for i in range(2):
@@ -61,7 +52,9 @@ class MyTabWidget(QWidget):
         self.mytabs[4].setLayout(psa_vbox)
         psa_btn_row = QHBoxLayout()
         parent.psa_resid_btn = QPushButton('Show: Residuals')
+        parent.psa_drift_btn = QPushButton('Drift sub: Off')
         psa_btn_row.addWidget(parent.psa_resid_btn)
+        psa_btn_row.addWidget(parent.psa_drift_btn)
         psa_btn_row.addStretch()
         psa_vbox.addLayout(psa_btn_row)
         psa_grid_widget = QWidget()
@@ -100,14 +93,7 @@ class MyTabWidget(QWidget):
         self.mytabs[10].setLayout(glayout)
         glayout.addWidget(parent.config_editor, 0, 0)
 
-        gains_box = QGroupBox('Computed gains (read-only)')
-        gains_form = QFormLayout(gains_box)
-        parent.le_fixed_g2 = QLineEdit('—')
-        parent.le_fixed_g2.setReadOnly(True)
-        gains_form.addRow('fixed g2', parent.le_fixed_g2)
-        glayout.addWidget(gains_box, 1, 0)
         glayout.setRowStretch(0, 1)
-        glayout.setRowStretch(1, 0)
 
         
 
