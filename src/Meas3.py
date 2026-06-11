@@ -106,8 +106,9 @@ class Meas(QObject):
 
     def switch(self,switch_normal=True):
         self.switch_normal =switch_normal
-        s1='(@311,323,335,347)' #row1=col1, row2=col3, row3=col5, row4=col7
-        s2='(@313,321,337,345)' #row1=col3, row2=col1, row3=col7, row4=col5
+        return
+        s1='(@311,333)' #row1=col1, row2=col3, row3=col5, row4=col7
+        s2='(@313,331)' #row1=col3, row2=col1, row3=col7, row4=col5
         if self.switch_normal:
             self.dvm.write('ROUT:OPEN '+s1)  # row1 open col8 row4 open col 1
             self.dvm.write('ROUT:CLOS '+s2)  # row1 clse col1 row4 close col 8
@@ -123,14 +124,13 @@ class Meas(QObject):
         """Set all four digitizer channels to the same range based on V2 amplitude at DAQ.
         Returns the range in volts (0.3 or 3).
         """
-        rng = 0.3 if V2_daq < 0.6 else 3
-        self.dvm.write(f'ACQ3:VOLT {rng},DIFF,AC,TIME,(@101:104)')
-        #self.dvm.write(f'ACQ3:VOLT 0.3,DIFF,AC,TIME,(@103:104)')
-
-        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
-        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
-        self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
-        return rng
+        self.dvm.write('FORM3 REAL')
+        self.dvm.write('ACQ3:VOLT 0.3,DIFF,DC,TIME,(@101,102,103,104)')   # V1, V2: large signals
+        self.dvm.write('ACQ3:VOLT 3,DIFF,DC,TIME,(@201,202,203,204,301,302,303,304)')  # V3, V4: 300 mV range
+        self.dvm.write('SAMP3:RATE MAX ,(@101,102,103,104,201,202,203,204,301,302,303,304)')
+        self.dvm.write('SAMP3:COUN {0},(@101,102,103,104,201,202,203,204,301,302,303,304)'.format(80000))
+        self.dvm.write('TRIG3:SOUR BUS,(@101,102,103,104,201,202,203,204,301,302,303,304)')
+        return 3
 
     def precmd(self):
         self.sg1.write('UNIT:ANGL DEG')
@@ -140,12 +140,13 @@ class Meas(QObject):
         self.sg1.write('SOUR2:FUNC SIN')
         self.dvm.timeout = 25000
 
-        self.dvm.write('FORM3 REAL')
-        self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@101:102)')   # V1, V2: large signals
-        self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@103:104)')  # V3, V4: 300 mV range
-        self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
-        self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
-        self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
+        self.configure_range(3)
+        
+        #self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@101:102)')   # V1, V2: large signals
+        #self.dvm.write('ACQ3:VOLT 3,DIFF,AC,TIME,(@103:104)')  # V3, V4: 300 mV range
+        #self.dvm.write('SAMP3:RATE {0:8.2f},(@101:104)'.format(self.fsamp))
+        #self.dvm.write('SAMP3:COUN {0},(@101:104)'.format(self.nsamp))
+        #self.dvm.write('TRIG3:SOUR BUS,(@101:104)')
 
     def write1dbg(self, ostr, debug=False):
         self.sg1.write(ostr)
@@ -211,9 +212,10 @@ class Meas(QObject):
             self.logMessage.emit(f'Error: {ret}')
 
     def sendtrig(self):
-        self.dvm.write('INIT3 (@101:104)')
+        self.dvm.write('INIT3 (@102,104,201,301)') #
         self.dvm.write('*TRG')
 
+       
     @pyqtSlot()
     def start(self):
         self._stop = False
@@ -281,15 +283,13 @@ class Meas(QObject):
 
     def getvals(self):
         if self.switch_normal:
-            ch2 = self._fetch(101)
-            ch1 = self._fetch(102)
-            ch4 = self._fetch(103)
-            ch3 = self._fetch(104)
+            ch1 = self._fetch(301)
+            ch2 = self._fetch(201)
         else:
-            ch1 = self._fetch(101)
-            ch2 = self._fetch(102)
-            ch3 = self._fetch(103)
-            ch4 = self._fetch(104)
+            ch1 = self._fetch(301)
+            ch2 = self._fetch(201)
+        ch3 = self._fetch(102)
+        ch4 = self._fetch(104)
 
         if self.saverawdata:
             now = datetime.datetime.now()

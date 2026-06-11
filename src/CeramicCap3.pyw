@@ -710,6 +710,7 @@ class MainWindow(QMainWindow):
         if not os.path.exists(volt_path):
             with open(volt_path, 'w') as fh:
                 fh.write(f'# {self.run_description}\n')
+                fh.write(f'# NPTS: {self.Npts}\n')
                 fh.write('# ' + ' '.join(df_volt.columns) + '\n')
             self.myprint(f'  VOLT7: {bd0}  {os.path.basename(volt_path)}')
         df_volt.to_csv(volt_path, mode='a', sep=' ', index=False, header=False, float_format='%.10g')
@@ -727,6 +728,7 @@ class MainWindow(QMainWindow):
         if not os.path.exists(cc_path):
             with open(cc_path, 'w') as fh:
                 fh.write(f'# {self.run_description}\n')
+                fh.write(f'# NPTS: {self.Npts}\n')
                 fh.write('# ' + ' '.join(df_cc.columns) + '\n')
         df_cc.to_csv(cc_path, mode='a', sep=' ', index=False, header=False, float_format='%.8g')
 
