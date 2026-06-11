@@ -25,6 +25,7 @@ from PyQt5.QtGui import QKeySequence
 
 from PyQt5.QtWidgets import (
     QApplication,
+    QComboBox,
     QInputDialog,
     QLabel,
     QMainWindow,
@@ -119,9 +120,10 @@ class MainWindow(QMainWindow):
             for j in range(2):
                 self.alphafplots[i, j] = mplwidget.MplWidget(rightax=(i == 1))
 
-        self.etaplots = np.empty((1, 2), dtype=object)
-        for j in range(2):
-            self.etaplots[0, j] = mplwidget.MplWidget(rightax=False)
+        self.etaplots = np.empty((2, 2), dtype=object)
+        for i in range(2):
+            for j in range(2):
+                self.etaplots[i, j] = mplwidget.MplWidget(rightax=False)
 
         self.balanceplots = np.empty((2, 2), dtype=object)
         for i in range(2):
@@ -142,10 +144,14 @@ class MainWindow(QMainWindow):
         self.buStart = QPushButton("Start")
         self.buStop  = QPushButton("Stop")
         self.buQuit  = QPushButton("Quit")
+        self.switchModeCombo = QComboBox()
+        self.switchModeCombo.addItems(['straight, tape front', 'cross, tape back'])
         button_row = QHBoxLayout()
         button_row.addWidget(self.buStart)
         button_row.addWidget(self.buStop)
         button_row.addWidget(self.buQuit)
+        button_row.addWidget(QLabel("Switch:"))
+        button_row.addWidget(self.switchModeCombo)
         button_row.addStretch()
 
         self.circuit_setup = CircuitSetup.CircuitSetupWidget(self.config.cfgpath)
@@ -394,28 +400,18 @@ class MainWindow(QMainWindow):
                 self.allData.countf_sw(self.fsig, cur_sw), self.nrMeas, sw_str, self.fsig/1000))
         if self.fsig == self.fsigold:
             if self.allData.countf_sw(self.fsig, cur_sw) == self.nrMeas:
-                if self.switch_normal:      # sw0 complete — switch to sw1
-                    self.switch_normal = False
-                    self.warmup_count = 0
-                    self._small_step_count = 0
-                    self.meta_V1rb = []
-                    self.meta_eta3 = []
-                    self._prev_V1b = None
-                    self.myprint(f"straight done at {self.fsig/1000:.4g} kHz — switching to cross")
-                else:                       # sw1 complete — save and advance
-                    self.saveData(self.fsig)
-                    self.switch_normal = True
-                    self.freqs_done += 1
-                    self.freqprogresslabel.setText(f'{self.freqs_done}/{self.total_freqs} freq')
-                    self.sweepProgressBar.setValue(self.freqs_done)
-                    elapsed = time.time() - self.run_start_time
-                    secs_remaining = (self.total_freqs - self.freqs_done) * elapsed / self.freqs_done
-                    eta = datetime.datetime.now() + datetime.timedelta(seconds=secs_remaining)
-                    self.etalabel.setText(f"ETA {eta.strftime('%H:%M')}")
-                    if self.fsig == self.flist[-1]:
-                        self.measuring = False
-                    else:
-                        self.fp()
+                self.saveData(self.fsig)
+                self.freqs_done += 1
+                self.freqprogresslabel.setText(f'{self.freqs_done}/{self.total_freqs} freq')
+                self.sweepProgressBar.setValue(self.freqs_done)
+                elapsed = time.time() - self.run_start_time
+                secs_remaining = (self.total_freqs - self.freqs_done) * elapsed / self.freqs_done
+                eta = datetime.datetime.now() + datetime.timedelta(seconds=secs_remaining)
+                self.etalabel.setText(f"ETA {eta.strftime('%H:%M')}")
+                if self.fsig == self.flist[-1]:
+                    self.measuring = False
+                else:
+                    self.fp()
         self.replot()
         old_rData.strip_raw()
 
@@ -443,7 +439,7 @@ class MainWindow(QMainWindow):
         V1 = -I1 * (R + Z_C1)
         return V1
 
-    def getV1(self, f, R=50.0, V_C2_max=3.0, V_sg_max=9.999):
+    def getV1(self, f, R=50.0, V_C2_max=9.0, V_sg_max=9.999):
         """
         Choose V2 (reference drive, SOUR2) and derive V1 (DUT drive, SOUR1).
 
@@ -493,6 +489,7 @@ class MainWindow(QMainWindow):
         self.buStart.setEnabled(False)
         self.buStop.setEnabled(True)
         self.buStop.setStyleSheet('background-color: #c0392b; color: white; font-weight: bold;')
+        self.switchModeCombo.setEnabled(False)
         self.allData = CustomData.AllData()
         self.runDataDir = self.ensureDir()
         self.run_start_time = time.time()
@@ -508,7 +505,7 @@ class MainWindow(QMainWindow):
         self.fsigold = -1
         self.warmup_count = 0
         self._small_step_count = 0
-        self.switch_normal = True
+        self.switch_normal = (self.switchModeCombo.currentIndex() == 0)
         self._run_logged = False
         self.progressBar.setValue(0)
         self.freqs_done = 0
@@ -611,6 +608,7 @@ class MainWindow(QMainWindow):
             self.buStart.setEnabled(True)
             self.buStop.setEnabled(False)
             self.buStop.setStyleSheet('')
+            self.switchModeCombo.setEnabled(True)
             self.etalabel.setText(f"Done {datetime.datetime.now().strftime('%H:%M:%S')}")
             title_suffix = 'Stopped' if stopped else 'Complete'
             self.setWindowTitle(f'CeramicCap3 — {getattr(self, "run_description", "")} [{title_suffix}]')
@@ -660,8 +658,8 @@ class MainWindow(QMainWindow):
             self.plotpsa()
         elif tat == 'alpha(f)':
             self.plotalphaf()
-        elif tat == 'eta':
-            self.ploteta()
+        elif tat == 'alpha(t)':
+            self.plotalphat()
         elif tat == 'V1bal':
             self.plotbalance()
         elif tat == 'last status':
@@ -794,7 +792,7 @@ class MainWindow(QMainWindow):
             means_by_sw = {0: {}, 1: {}}   # sw -> {freq -> mean_value}
             for sw, (mk, mfc) in SW_MARKERS.items():
                 color = SW_COLORS[sw]
-                f_pts, v_pts, f_bar, v_bar, e_bar = [], [], [], [], []
+                f_pts, v_pts = [], []
                 mkw = {'ms': 4}
                 if mfc is not None:
                     mkw['mfc'] = mfc
@@ -803,17 +801,10 @@ class MainWindow(QMainWindow):
                     if len(vals) == 0:
                         continue
                     means_by_sw[sw][uf] = np.mean(vals)
-                    if len(vals) > 2:
-                        f_bar.append(uf)
-                        v_bar.append(np.mean(vals))
-                        e_bar.append(np.std(vals, ddof=1))
-                    else:
-                        f_pts.extend([uf] * len(vals))
-                        v_pts.extend(vals.tolist())
+                    f_pts.extend([uf] * len(vals))
+                    v_pts.extend(vals.tolist())
                 if f_pts:
                     ax.plot(f_pts, v_pts, color + mk, **mkw)
-                if f_bar:
-                    ax.errorbar(f_bar, v_bar, yerr=e_bar, fmt=color + mk, capsize=3, **mkw)
             # Green average where both switch states have data
             f_avg, v_avg = [], []
             for uf in freqs:
@@ -844,7 +835,6 @@ class MainWindow(QMainWindow):
         for sw, (mk, mfc) in SW_MARKERS.items():
             color = SW_COLORS[sw]
             f_pts, mag_pts, ang_pts = [], [], []
-            f_bar, mag_bar, mag_std, ang_bar, ang_std = [], [], [], [], []
             mkw = {'ms': 4}
             if mfc is not None:
                 mkw['mfc'] = mfc
@@ -858,22 +848,12 @@ class MainWindow(QMainWindow):
                 mags = np.abs(diffs)
                 angs = np.angle(diffs, deg=True)
                 bot_means[sw][uf] = (np.mean(mags), np.mean(angs))
-                if len(diffs) > 2:
-                    f_bar.append(uf)
-                    mag_bar.append(np.mean(mags))
-                    mag_std.append(np.std(mags, ddof=1))
-                    ang_bar.append(np.mean(angs))
-                    ang_std.append(np.std(angs, ddof=1))
-                else:
-                    f_pts.extend([uf] * len(diffs))
-                    mag_pts.extend(mags.tolist())
-                    ang_pts.extend(angs.tolist())
+                f_pts.extend([uf] * len(diffs))
+                mag_pts.extend(mags.tolist())
+                ang_pts.extend(angs.tolist())
             if f_pts:
                 ax_mag.plot(f_pts, mag_pts, color + mk, **mkw)
                 ax_ang.plot(f_pts, ang_pts, color + mk, **mkw)
-            if f_bar:
-                ax_mag.errorbar(f_bar, mag_bar, yerr=mag_std, fmt=color + mk, capsize=3, **mkw)
-                ax_ang.errorbar(f_bar, ang_bar, yerr=ang_std, fmt=color + mk, capsize=3, **mkw)
         # Green average for bottom row
         f_avg, mag_avg, ang_avg = [], [], []
         for uf in freqs:
@@ -901,26 +881,73 @@ class MainWindow(QMainWindow):
                 ax.legend(handles=legend_handles, fontsize=7, loc='best')
                 self.alphafplots[i, j].canvas.draw()
 
-    def ploteta(self):
-        if self.rData.Res['ts'] <= 0 or not hasattr(self.rData, 'combined3'):
+    def plotalphat(self):
+        if self.allData.count() == 0:
             return
-        for j in range(2):
-            self.etaplots[0, j].canvas.ax1.cla()
-        mul = 1e6
-        offset = self.rData.Res['ratio']
+        for i in range(2):
+            for j in range(2):
+                self.etaplots[i, j].canvas.ax1.cla()
 
-        def split(v):
-            return (np.real(v) - offset) * mul, np.imag(v) * mul
+        SW_MARKERS = {0: ('o', 'none'), 1: ('s', None)}
+        SW_COLORS  = {0: 'b', 1: 'r'}
 
-        c4x, c4y   = split(self.rData.combined3)
-        Vz3x, Vz3y = split(self.rData.Res['Vz3'])
-        ax4 = self.etaplots[0, 1].canvas.ax1
-        ax4.plot(c4x, c4y, 'm+')
-        ax4.plot(Vz3x, Vz3y, 'r*', markersize=10)
-        ax4.set_xlabel('(Re(γ₃η₃ − η₂) − ratio) × 10⁶')
-        ax4.set_ylabel('Im(γ₃η₃ − η₂) × 10⁶')
-        for j in range(2):
-            self.etaplots[0, j].canvas.draw()
+        nds = []
+        for uf in self.allData.freqs():
+            nds.extend(self.allData.entries(uf))
+        nds.sort(key=lambda nd: nd.Res['ts'])
+
+        t0 = getattr(self, 'run_start_time', nds[0].Res['ts'] if nds else 0)
+
+        ax_al = self.etaplots[0, 0].canvas.ax1
+        ax_d  = self.etaplots[0, 1].canvas.ax1
+        ax_v1br = self.etaplots[1, 0].canvas.ax1
+        ax_v1bi = self.etaplots[1, 1].canvas.ax1
+
+        for sw, (mk, mfc) in SW_MARKERS.items():
+            color = SW_COLORS[sw]
+            idx_pts, al_pts, d_pts = [], [], []
+            t_pts, v1br_pts, v1bi_pts = [], [], []
+            mkw = {'ms': 4}
+            if mfc is not None:
+                mkw['mfc'] = mfc
+            for i, nd in enumerate(nds, start=1):
+                if nd.Res.get('switch_pos', 0) != sw:
+                    continue
+                r = analysismodule.analyze_block(nd.V1m, nd.V2m, nd.V3m, nd.V4m)
+                idx_pts.append(i)
+                al_pts.append(r['al_right'])
+                d_pts.append(r['D_right'])
+                v1b = nd.Res.get('V1_balance')
+                if v1b is not None:
+                    t_pts.append(nd.Res['ts'] - t0)
+                    v1br_pts.append(np.real(v1b))
+                    v1bi_pts.append(np.imag(v1b))
+            if idx_pts:
+                ax_al.plot(idx_pts, al_pts, color + mk, **mkw)
+                ax_d.plot(idx_pts, d_pts, color + mk, **mkw)
+            if t_pts:
+                ax_v1br.plot(t_pts, v1br_pts, color + mk, **mkw)
+                ax_v1bi.plot(t_pts, v1bi_pts, color + mk, **mkw)
+
+        ax_al.set_xlabel('measurement number')
+        ax_al.set_ylabel('α₃  (Re ΔC/C)')
+        ax_d.set_xlabel('measurement number')
+        ax_d.set_ylabel('D₃  (Im ΔC/C)')
+        ax_v1br.set_xlabel('time (s)')
+        ax_v1br.set_ylabel('Re(V1_balance)')
+        ax_v1bi.set_xlabel('time (s)')
+        ax_v1bi.set_ylabel('Im(V1_balance)')
+
+        from matplotlib.lines import Line2D
+        legend_handles = [
+            Line2D([0], [0], color='b', marker='o', mfc='none', ms=5, linestyle='none', label='straight'),
+            Line2D([0], [0], color='r', marker='s', ms=5, linestyle='none', label='cross'),
+        ]
+        for i in range(2):
+            for j in range(2):
+                ax = self.etaplots[i, j].canvas.ax1
+                ax.legend(handles=legend_handles, fontsize=7, loc='best')
+                self.etaplots[i, j].canvas.draw()
 
     def calc_V1rb_best(self, decay=None, max_step_frac=None):
         if decay is None:
