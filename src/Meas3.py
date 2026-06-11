@@ -125,8 +125,8 @@ class Meas(QObject):
         Returns the range in volts (0.3 or 3).
         """
         self.dvm.write('FORM3 REAL')
-        self.dvm.write('ACQ3:VOLT 0.3,DIFF,DC,TIME,(@101,102,103,104)')   # V1, V2: large signals
-        self.dvm.write('ACQ3:VOLT 3,DIFF,DC,TIME,(@201,202,203,204,301,302,303,304)')  # V3, V4: 300 mV range
+        self.dvm.write('ACQ3:VOLT 0.3,SEND,DC,TIME,(@101,102,103,104)')   # V1, V2: large signals
+        self.dvm.write('ACQ3:VOLT 3,SEND,DC,TIME,(@201,202,203,204,301,302,303,304)')  # V3, V4: 300 mV range
         self.dvm.write('SAMP3:RATE MAX ,(@101,102,103,104,201,202,203,204,301,302,303,304)')
         self.dvm.write('SAMP3:COUN {0},(@101,102,103,104,201,202,203,204,301,302,303,304)'.format(80000))
         self.dvm.write('TRIG3:SOUR BUS,(@101,102,103,104,201,202,203,204,301,302,303,304)')
@@ -212,7 +212,7 @@ class Meas(QObject):
             self.logMessage.emit(f'Error: {ret}')
 
     def sendtrig(self):
-        self.dvm.write('INIT3 (@102,104,201,301)') #
+        self.dvm.write('INIT3 (@102,104,301,304)') #
         self.dvm.write('*TRG')
 
        
@@ -284,10 +284,10 @@ class Meas(QObject):
     def getvals(self):
         if self.switch_normal:
             ch1 = self._fetch(301)
-            ch2 = self._fetch(201)
+            ch2 = self._fetch(304)
         else:
             ch1 = self._fetch(301)
-            ch2 = self._fetch(201)
+            ch2 = self._fetch(304)
         ch3 = self._fetch(102)
         ch4 = self._fetch(104)
 

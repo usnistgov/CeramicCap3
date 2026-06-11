@@ -419,7 +419,7 @@ class MainWindow(QMainWindow):
         self.replot()
         old_rData.strip_raw()
 
-    def calcVsmall(self, f, V2=-5.9, R=50.0):
+    def calcVsmall(self, f, V2=-3.0, R=50.0):
         C2 = self.C2
         iw = 1j * f * 2 * np.pi
         I1 = V2 * iw * C2 / (1 + iw * C2 * R)
@@ -443,7 +443,7 @@ class MainWindow(QMainWindow):
         V1 = -I1 * (R + Z_C1)
         return V1
 
-    def getV1(self, f, R=50.0, V_C2_max=6.0, V_sg_max=9.999):
+    def getV1(self, f, R=50.0, V_C2_max=3.0, V_sg_max=9.999):
         """
         Choose V2 (reference drive, SOUR2) and derive V1 (DUT drive, SOUR1).
 
