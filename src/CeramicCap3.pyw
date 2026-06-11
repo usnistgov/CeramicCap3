@@ -443,7 +443,7 @@ class MainWindow(QMainWindow):
         V1 = -I1 * (R + Z_C1)
         return V1
 
-    def getV1(self, f, R=50.0, V_C2_max=6.0, V_sg_max=9.999):
+    def getV1(self, f, R=50.0, V_C2_max=9.8, V_sg_max=9.999):
         """
         Choose V2 (reference drive, SOUR2) and derive V1 (DUT drive, SOUR1).
 
@@ -660,8 +660,8 @@ class MainWindow(QMainWindow):
             self.plotpsa()
         elif tat == 'alpha(f)':
             self.plotalphaf()
-        elif tat == 'eta':
-            self.ploteta()
+        elif tat == 'alpha(t)':
+            self.plotalphat()
         elif tat == 'V1bal':
             self.plotbalance()
         elif tat == 'last status':
@@ -901,25 +901,53 @@ class MainWindow(QMainWindow):
                 ax.legend(handles=legend_handles, fontsize=7, loc='best')
                 self.alphafplots[i, j].canvas.draw()
 
-    def ploteta(self):
-        if self.rData.Res['ts'] <= 0 or not hasattr(self.rData, 'combined3'):
+    def plotalphat(self):
+        if self.allData.count() == 0:
             return
         for j in range(2):
             self.etaplots[0, j].canvas.ax1.cla()
-        mul = 1e6
-        offset = self.rData.Res['ratio']
 
-        def split(v):
-            return (np.real(v) - offset) * mul, np.imag(v) * mul
+        SW_MARKERS = {0: ('o', 'none'), 1: ('s', None)}
+        SW_COLORS  = {0: 'b', 1: 'r'}
 
-        c4x, c4y   = split(self.rData.combined3)
-        Vz3x, Vz3y = split(self.rData.Res['Vz3'])
-        ax4 = self.etaplots[0, 1].canvas.ax1
-        ax4.plot(c4x, c4y, 'm+')
-        ax4.plot(Vz3x, Vz3y, 'r*', markersize=10)
-        ax4.set_xlabel('(Re(γ₃η₃ − η₂) − ratio) × 10⁶')
-        ax4.set_ylabel('Im(γ₃η₃ − η₂) × 10⁶')
+        nds = []
+        for uf in self.allData.freqs():
+            nds.extend(self.allData.entries(uf))
+        nds.sort(key=lambda nd: nd.Res['ts'])
+
+        ax_al = self.etaplots[0, 0].canvas.ax1
+        ax_d  = self.etaplots[0, 1].canvas.ax1
+
+        for sw, (mk, mfc) in SW_MARKERS.items():
+            color = SW_COLORS[sw]
+            idx_pts, al_pts, d_pts = [], [], []
+            mkw = {'ms': 4}
+            if mfc is not None:
+                mkw['mfc'] = mfc
+            for i, nd in enumerate(nds, start=1):
+                if nd.Res.get('switch_pos', 0) != sw:
+                    continue
+                r = analysismodule.analyze_block(nd.V1m, nd.V2m, nd.V3m, nd.V4m)
+                idx_pts.append(i)
+                al_pts.append(r['al_right'])
+                d_pts.append(r['D_right'])
+            if idx_pts:
+                ax_al.plot(idx_pts, al_pts, color + mk, **mkw)
+                ax_d.plot(idx_pts, d_pts, color + mk, **mkw)
+
+        ax_al.set_xlabel('measurement number')
+        ax_al.set_ylabel('α₃  (Re ΔC/C)')
+        ax_d.set_xlabel('measurement number')
+        ax_d.set_ylabel('D₃  (Im ΔC/C)')
+
+        from matplotlib.lines import Line2D
+        legend_handles = [
+            Line2D([0], [0], color='b', marker='o', mfc='none', ms=5, linestyle='none', label='straight'),
+            Line2D([0], [0], color='r', marker='s', ms=5, linestyle='none', label='cross'),
+        ]
         for j in range(2):
+            ax = self.etaplots[0, j].canvas.ax1
+            ax.legend(handles=legend_handles, fontsize=7, loc='best')
             self.etaplots[0, j].canvas.draw()
 
     def calc_V1rb_best(self, decay=None, max_step_frac=None):

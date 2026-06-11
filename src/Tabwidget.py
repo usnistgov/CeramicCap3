@@ -16,7 +16,7 @@ class MyTabWidget(QWidget):
         self.master     = QTabWidget()
 
         self.master.resize(300, 200) 
-        self.tablabels=['setup','scatter','raw','resid','PSA','alpha(f)','eta','V1bal','msg','last status','config']
+        self.tablabels=['setup','scatter','raw','resid','PSA','alpha(f)','alpha(t)','V1bal','msg','last status','config']
         self.mytabs =[]
         for l in self.tablabels:
             self.mytabs.append(QWidget())
